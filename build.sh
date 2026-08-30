@@ -41,6 +41,17 @@ RESOURCES="$CONTENTS/Resources"
 HELPERS="$CONTENTS/Helpers"
 MODULE_CACHE="$BUILD_ROOT/module-cache-$TARGET_ARCH"
 TARGET_ARGS=()
+BUILD_STAGE_FILE="${AI_ACCESS_BUILD_STAGE_FILE:-}"
+
+record_build_stage() {
+  if [[ -n "$BUILD_STAGE_FILE" ]]; then
+    mkdir -p "${BUILD_STAGE_FILE:h}"
+    print -r -- "$1" >"$BUILD_STAGE_FILE"
+    print -r -- "PUBLIC_SOURCE_BUILD_STAGE=$1"
+  fi
+}
+
+record_build_stage preflight
 
 cleanup() {
   if [[ -e "$APP" ]]; then
@@ -79,6 +90,7 @@ case "$TARGET_ARCH" in
     ;;
 esac
 
+record_build_stage assemble_app
 mkdir -p "$MACOS" "$RESOURCES" "$HELPERS" "$MODULE_CACHE"
 cp "$ROOT/Info.plist" "$CONTENTS/Info.plist"
 cp "$ROOT/Assets/AppIcon-v2.icns" "$RESOURCES/AppIcon.icns"
@@ -91,6 +103,7 @@ cp \
   "$ROOT/SessionCore/THIRD_PARTY_NOTICES.md" \
   "$RESOURCES/SESSIONCORE-THIRD-PARTY-NOTICES.md"
 
+record_build_stage rust_session_core
 SESSION_CORE_BINARY=$(
   AI_ACCESS_TARGET_ARCH="$TARGET_ARCH" \
     "$ROOT/Scripts/build-session-core.sh"
@@ -112,6 +125,7 @@ esac
 source "$ROOT/Scripts/swift-source-manifest.sh"
 ai_access_load_swift_sources "$ROOT" "build.sh"
 
+record_build_stage swift_compile
 swiftc \
   -parse-as-library \
   -O \
@@ -126,6 +140,7 @@ swiftc \
   -lsqlite3 \
   -o "$MACOS/ConfigAdvisor"
 
+record_build_stage codesign
 codesign \
   --force \
   --sign - \
@@ -142,6 +157,7 @@ codesign \
 codesign --verify --strict "$HELPERS/ai-access-session-core"
 codesign --verify --deep --strict "$APP"
 
+record_build_stage finalize_app
 if [[ -e "$FINAL_APP" ]]; then
   mkdir -p "$APP_ARCHIVE"
   mv \
@@ -149,4 +165,5 @@ if [[ -e "$FINAL_APP" ]]; then
     "$APP_ARCHIVE/AI接入助手-${TARGET_ARCH}-$STAMP.app"
 fi
 mv "$APP" "$FINAL_APP"
+record_build_stage complete
 echo "$FINAL_APP"

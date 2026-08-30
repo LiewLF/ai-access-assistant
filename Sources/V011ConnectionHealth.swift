@@ -8,6 +8,7 @@ enum V011SessionProviderCheck:
     case drifted
     case unavailable
 }
+
 enum V011ConnectionReceiptFreshness: String, Codable, Equatable, Sendable {
     case fresh
     case stale

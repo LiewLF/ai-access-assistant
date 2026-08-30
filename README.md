@@ -6,7 +6,7 @@ AI接入助手是面向 macOS Codex Desktop 用户的本机接入、运行证据
 
 ## 当前发布状态
 
-`v0.12.0-preview.1` 是 **source-only preview**：只公开源码，不提供 DMG、App、ZIP 或其他可执行文件。
+`v0.12.0-preview.2` 是 **source-only preview**：只公开源码，不提供 DMG、App、ZIP 或其他可执行文件。
 
 macOS 正式公开二进制仍被以下门槛阻断：Developer ID Application 签名、hardened runtime、secure timestamp、公证、stapling、Gatekeeper 验证，以及独立真实机器验收。不要把本仓库中的 ad-hoc 本机构建当作正式公开安装版。
 
@@ -28,10 +28,18 @@ Windows 目录保留原生源码目标和安全合同；Windows 11 x64 用户运
 
 ```bash
 ./Scripts/bootstrap-rust-toolchain.sh
-AI_ACCESS_TARGET_ARCH=arm64 ./build.sh
+python3 Scripts/verify-source-build.py
 ```
 
-输出位于 `build/AI接入助手.app`。脚本只做本地 ad-hoc 签名，不生成 DMG，不上传，不安装，也不绕过 Gatekeeper。
+验证器只调用仓库的 `build.sh`，使用独立构建目录，并把结果写入 `build/source-build-verification.json`。成功时输出
+`PUBLIC_SOURCE_BUILD=PASS`；失败时输出 `stage`、`reason` 和 receipt 路径，完整编译日志保留在 receipt 指向的本机
+`build/source-build-runs/` 目录。receipt 不内嵌日志正文，适合先审阅和分享；日志可能包含本机路径，分享前应自行检查。
+
+receipt 明确区分 macOS arm64 源码构建、其他平台、打包、安装、启动和 Gatekeeper。当前验证器只支持 macOS arm64；
+macOS x86_64 与 Windows 11 x64 仍显示 `unverified`。`FAST_UNVERIFIED` 也不会因源码构建通过而改变。
+
+输出 App 位于 receipt 记录的独立 run 目录。脚本只做本地 ad-hoc 签名，不生成 DMG，不上传，不安装、不启动 App，
+也不绕过 Gatekeeper。
 
 ## 目录
 

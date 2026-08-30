@@ -16,12 +16,14 @@
 
 ```bash
 ./Scripts/bootstrap-rust-toolchain.sh
-AI_ACCESS_TARGET_ARCH=arm64 ./build.sh
+python3 Scripts/verify-source-build.py
 ```
 
 构建要求 macOS 15 或更高版本、Apple Silicon、Apple Command Line Tools 或 Xcode。Rust 工具链由 `SessionCore/rust-toolchain.toml` 固定，Rust 依赖由 `SessionCore/Cargo.lock` 锁定。Swift 编译输入由 `Scripts/swift-source-manifest.tsv` 中 `build.sh` 标签固定。
 
-输出是本机 ad-hoc 签名的 `build/AI接入助手.app`。构建脚本不生成 DMG、不安装、不上传，也不提供 Gatekeeper 绕过命令。
+验证器在独立 run 目录调用现有 `build.sh`，核对锁定 Rust 版本、Swift 工具链、arm64 主程序与 SessionCore、公开 bundle id 和 ad-hoc 签名，并写入 `build/source-build-verification.json`。失败 receipt 记录最后构建阶段、退出码和日志 SHA-256；详细错误位于 receipt 指向的本机日志。
+
+receipt 的平台矩阵只把本次实际通过的 macOS arm64 源码构建标为 `passed`。macOS x86_64、Windows 11 x64、打包、安装、启动、Gatekeeper 和 Fast 不会由该命令推断为通过。构建脚本不生成 DMG、不安装、不上传，也不提供 Gatekeeper 绕过命令。
 
 ## 分发状态
 
