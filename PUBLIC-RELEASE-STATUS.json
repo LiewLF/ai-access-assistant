@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "release": "v0.12.0-preview.1",
+  "release": "v0.12.0-preview.2",
   "release_type": "source-only-preview",
   "source_only": true,
   "binary_assets_attached": false,
@@ -17,5 +17,13 @@
   "windows_11_x64_runtime_verified": false,
   "production_update_keys_configured": false,
   "public_candidate_audit": "passed",
-  "local_source_build": "passed_macos_arm64_adhoc"
+  "local_source_build": "unverified",
+  "source_build_verification": {
+    "command": "python3 Scripts/verify-source-build.py",
+    "bundled_receipt": false,
+    "macos_arm64": "requires-local-run",
+    "macos_x86_64": "unverified",
+    "windows_11_x64": "unverified"
+  },
+  "fast_status": "FAST_UNVERIFIED"
 }
