@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "product": "AI接入助手",
+  "product_version": "0.12.0",
+  "source_build": 144,
+  "installed_build": 141,
+  "state": "windows-native-transactions-source-verified",
+  "next_build": 145,
+  "target": {
+    "platform": "Windows 11",
+    "minimum_build": 22000,
+    "architectures": [
+      "x64"
+    ],
+    "runtime_identifier": "win-x64",
+    "toolchain": ".NET 10 LTS + WinUI 3"
+  },
+  "distribution_boundary": {
+    "app_build_allowed": false,
+    "package_generation_allowed": false,
+    "installation_allowed": false,
+    "release_allowed": false,
+    "windows_artifact_in_macos_package": false,
+    "build150_final_package_limit": 1
+  },
+  "credential_manager_contract": {
+    "api": "CredReadW/CredWriteW/CredDeleteW/CredFree",
+    "type": "CRED_TYPE_GENERIC",
+    "persistence": "CRED_PERSIST_LOCAL_MACHINE",
+    "target_prefix": "io.github.liewlf.aiaccessassistant/relay/",
+    "maximum_target_suffix_characters": 128,
+    "maximum_blob_bytes": 2560,
+    "not_found_read": "null",
+    "not_found_delete": "idempotent_success",
+    "native_read_buffer": "zero_blob_then_CredFree",
+    "native_write_buffer": "zero_then_free",
+    "managed_write_copy": "zero_before_return",
+    "managed_read_result": "caller_must_zero_after_use",
+    "raw_secret_in_config_log_preview_receipt": false,
+    "authentication_file_read_allowed": false
+  },
+  "mutex_contract": {
+    "api": "named System.Threading.Mutex",
+    "namespace_prefix": "Local\\io.github.liewlf.aiaccessassistant.",
+    "configuration_name": "Local\\io.github.liewlf.aiaccessassistant.config.v1",
+    "default_timeout_seconds": 5,
+    "maximum_timeout_seconds": 120,
+    "thread_affinity_required": true,
+    "abandoned_mutex": "release_ownership_then_block_for_recovery",
+    "timeout": "zero_write_busy_result"
+  },
+  "atomic_file_contract": {
+    "api": "ReplaceFileW",
+    "replace_flags": 0,
+    "maximum_configuration_bytes": 2097152,
+    "allowed_volume": "fixed_local_only",
+    "stage_replacement_backup_location": "same_directory_same_volume",
+    "network_device_relative_reparse_offline_paths_allowed": false,
+    "precondition": "sha256_plus_security_snapshot_checked_immediately_before_replace",
+    "external_writer_race": "not_proven_until_Build145_process_quiescence",
+    "stage_durability": "FileOptions.WriteThrough_plus_Flush_to_disk",
+    "metadata_required": [
+      "owner_group_DACL_SDDL",
+      "attributes",
+      "creation_time"
+    ],
+    "backup_required": true,
+    "backup_identity_required": true,
+    "ambiguous_errors": [
+      1175,
+      1176,
+      1177
+    ],
+    "ambiguous_error_action": "no_retry_preserve_evidence_require_recovery",
+    "successful_backup_cleanup": "verify_sha256_then_delete"
+  },
+  "configuration_transaction_contract": {
+    "plan_lifetime_seconds": 600,
+    "preview": "strict_UTF8_redacted_before_and_after",
+    "explicit_user_confirmation_required": true,
+    "plan_binding": "transaction_id_path_existence_content_hash_metadata_expiry",
+    "embedded_sensitive_assignment_allowed": false,
+    "env_key_reference_allowed": true,
+    "existing_file": "same_directory_stage_then_ReplaceFileW_with_backup",
+    "missing_file": "same_directory_CreateNew_flush_then_atomic_move",
+    "no_change": "zero_write",
+    "observed_pre_write_drift": "zero_write_prepare_fresh_preview",
+    "known_post_write_failure": "preserve_verified_backup_for_Build146_recovery",
+    "production_UI_call_site_enabled": false,
+    "process_quiescence_enabled": false
+  },
+  "entrypoint_side_effect_budget": {
+    "process_launch": 0,
+    "network_requests": 0,
+    "credential_operations": 0,
+    "authentication_file_reads": 0,
+    "configuration_writes": 0,
+    "automatic_switches": 0,
+    "paid_tasks": 0
+  },
+  "explicit_adapter_effects": {
+    "credential_read_write_delete": "only_direct_explicit_call",
+    "configuration_write": "only_fresh_preview_plus_confirmation_plus_mutex",
+    "temporary_files": "same_directory_bounded_stage_and_backup",
+    "process_or_network": 0
+  },
+  "evidence": {
+    "level": "source_verified",
+    "csharp_compile_state": "unverified_no_local_dotnet",
+    "windows_contract_tests": "defined_not_run_on_macos",
+    "windows_runtime_state": "unverified",
+    "windows_user_journey_state": "unverified",
+    "macos_product_build_state": "not_built",
+    "package_state": "not_run",
+    "install_state": "not_run",
+    "release_state": "false"
+  },
+  "excluded_scope": [
+    "production_UI_write_action",
+    "process_discovery_quiescence_or_launch",
+    "official_or_relay_network_validation",
+    "paid_or_real_task",
+    "automatic_switch_or_retry",
+    "automatic_recovery_after_ambiguous_ReplaceFileW",
+    "windows_arm64_or_x86",
+    "signed_windows_distribution",
+    "macos_runtime_evidence_as_windows_proof"
+  ],
+  "required_source_gates": [
+    {
+      "id": "windows-native-transactions",
+      "command": "Tests/Shell/test-build144-windows-transactions.sh"
+    },
+    {
+      "id": "swift-source-manifest",
+      "command": "Tests/Shell/test-swift-source-manifest.sh"
+    },
+    {
+      "id": "build-input-lock",
+      "command": "python3 Scripts/build_input_contract.py --verify --root . --lock BuildInputs.lock.json --allow-dirty"
+    },
+    {
+      "id": "release-readiness",
+      "command": "python3 Scripts/release_readiness.py --validate --self-test"
+    },
+    {
+      "id": "privacy-license-audit",
+      "command": "Tests/Shell/test-build114-privacy-license-audit.sh"
+    },
+    {
+      "id": "docs-health",
+      "command": "python3 Scripts/docs_health_check.py"
+    }
+  ]
+}

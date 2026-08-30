@@ -1,0 +1,10 @@
+.DS_Store
+build/
+dist/
+*.dmg
+*.app
+*.app.zip
+*.tar.gz
+*.xcarchive
+.swiftpm/
+SessionCore/target/

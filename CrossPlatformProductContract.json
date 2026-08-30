@@ -1,0 +1,217 @@
+{
+  "schema_version": 1,
+  "product": "AI接入助手",
+  "product_version": "0.12.0",
+  "source_build": 142,
+  "installed_build": 141,
+  "state": "cross-platform-product-contract-frozen",
+  "next_build": 143,
+  "distribution_boundary": {
+    "package_generation_allowed": false,
+    "installation_allowed": false,
+    "release_allowed": false,
+    "build150_final_package_limit": 1,
+    "build150_package_scope": "macos-arm64-current-flow",
+    "windows_artifacts_separate": true,
+    "windows_artifact_rule": "windows-native-runner-only-no-macos-bundle"
+  },
+  "user_outcomes": [
+    {
+      "id": "can_work_now",
+      "question": "当前能否工作",
+      "proof_required": "native_runtime_task_evidence"
+    },
+    {
+      "id": "next_safe_action",
+      "question": "失败后下一步做什么",
+      "proof_required": "one_action_bound_to_failure_stage"
+    },
+    {
+      "id": "continue_without_losing_work",
+      "question": "如何不丢工作地继续",
+      "proof_required": "recoverable_platform_transaction_or_read_only_path"
+    }
+  ],
+  "supported_journeys": [
+    "first_use",
+    "official_access",
+    "relay_access",
+    "mode_switch",
+    "recovery",
+    "capability_compatibility",
+    "continuity",
+    "session_history"
+  ],
+  "evidence_ladder": [
+    {
+      "id": "declared",
+      "proves": "contract_exists_only",
+      "runtime_support_claim_allowed": false
+    },
+    {
+      "id": "source_verified",
+      "proves": "source_contract_and_fail_closed_behavior",
+      "runtime_support_claim_allowed": false
+    },
+    {
+      "id": "runtime_verified",
+      "proves": "native_platform_user_journey_completed",
+      "runtime_support_claim_allowed": true
+    }
+  ],
+  "shared_contract": {
+    "shared_components": [
+      "journey_ids",
+      "evidence_levels",
+      "failure_stage_codes",
+      "single_primary_action_projection",
+      "non_sensitive_continuity_schema"
+    ],
+    "native_adapter_boundaries": {
+      "macos": [
+        "Keychain",
+        "POSIX_atomic_replace",
+        "NSProcess",
+        "AppKit"
+      ],
+      "windows": [
+        "Credential_Manager",
+        "ReplaceFile_and_ACL",
+        "Named_Mutex",
+        "Windows_process_control",
+        "WinUI_3"
+      ]
+    },
+    "never_shared_as_implementation": [
+      "credential_storage",
+      "filesystem_path_literals",
+      "file_permission_or_acl_semantics",
+      "process_control",
+      "installer_identity_or_signing"
+    ]
+  },
+  "platforms": {
+    "macos": {
+      "target": "macOS 15+",
+      "architectures": [
+        "arm64"
+      ],
+      "scope_state": "eight-journey-source-scope-frozen-at-build141",
+      "installed_build": 141,
+      "evidence_state": "prior-runtime-evidence-not-revalidated-by-build142",
+      "package_state": "build150-only"
+    },
+    "windows": {
+      "target": "Windows 11",
+      "minimum_build": 22000,
+      "architectures": [
+        "x64"
+      ],
+      "runtime_identifier": "win-x64",
+      "toolchain": {
+        "dotnet": "10.0.x-LTS",
+        "windows_app_sdk": "2.3.1",
+        "target_windows_sdk_build": 26100,
+        "ui": "WinUI 3"
+      },
+      "source_state": "read-only-mvp-present",
+      "runtime_state": "unverified",
+      "evidence_level": "source_verified",
+      "current_capabilities": [
+        "discover_codex_home",
+        "redacted_config_preview"
+      ],
+      "deferred_native_adapters": [
+        "credential_manager",
+        "replace_file_and_acl",
+        "named_mutex",
+        "process_control"
+      ],
+      "distribution": {
+        "private_candidate_only": true,
+        "runtime_validation_host": "disposable-Windows-11-x64",
+        "portable_exe": "unsigned-source-candidate",
+        "inno_per_user_installer": "unsigned-source-candidate",
+        "public_support_claim_allowed": false
+      }
+    }
+  },
+  "implementation_milestones": [
+    {
+      "build": 143,
+      "scope": "windows_codex_install_version_current_access_read_only",
+      "state": "planned"
+    },
+    {
+      "build": 144,
+      "scope": "windows_credential_and_configuration_transaction_adapters",
+      "state": "planned"
+    },
+    {
+      "build": 145,
+      "scope": "windows_official_relay_validation_cost_confirmation_failure_model",
+      "state": "planned"
+    },
+    {
+      "build": 146,
+      "scope": "windows_continuity_history_recovery",
+      "state": "planned"
+    },
+    {
+      "build": 147,
+      "scope": "windows_keyboard_screen_reader_high_dpi_long_path_permissions",
+      "state": "planned"
+    },
+    {
+      "build": 148,
+      "scope": "windows_native_install_candidate_source_gate",
+      "state": "planned"
+    }
+  ],
+  "excluded_scope": [
+    "automatic_provider_selection",
+    "automatic_retry_or_switch",
+    "automatic_paid_task",
+    "telemetry_or_cloud_upload",
+    "windows_arm64_or_x86",
+    "msix_or_public_signed_windows_release",
+    "screenshot_or_ocr",
+    "windows_binary_in_macos_package",
+    "macos_evidence_as_windows_runtime_proof",
+    "port_macos_keychain_paths_permissions_or_process_control"
+  ],
+  "required_source_gates": [
+    {
+      "id": "cross-platform-product-contract",
+      "command": "Tests/Shell/test-build142-cross-platform-contract.sh"
+    },
+    {
+      "id": "windows-adapter-contract",
+      "command": "Tests/Shell/test-windows-contracts.sh"
+    },
+    {
+      "id": "agent-loop-regression",
+      "command": "Tests/Shell/test-v011-access-model.sh"
+    },
+    {
+      "id": "build-input-lock",
+      "command": "python3 Scripts/build_input_contract.py --verify --root . --lock BuildInputs.lock.json"
+    },
+    {
+      "id": "release-readiness",
+      "command": "python3 Scripts/release_readiness.py --validate --self-test"
+    },
+    {
+      "id": "swift-source-manifest",
+      "command": "Tests/Shell/test-swift-source-manifest.sh"
+    },
+    {
+      "id": "privacy-license-audit",
+      "command": "Tests/Shell/test-build114-privacy-license-audit.sh"
+    },
+    {
+      "id": "docs-health",
+      "command": "python3 Scripts/docs_health_check.py"
+    }
+  ]
+}

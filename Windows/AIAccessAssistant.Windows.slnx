@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="src/AIAccessAssistant.Core/AIAccessAssistant.Core.csproj" />
+  <Project Path="src/AIAccessAssistant.Windows/AIAccessAssistant.Windows.csproj" />
+  <Project Path="tests/AIAccessAssistant.Core.ContractTests/AIAccessAssistant.Core.ContractTests.csproj" />
+</Solution>

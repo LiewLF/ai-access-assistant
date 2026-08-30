@@ -1,0 +1,15 @@
+SPDX-License-Identifier: AGPL-3.0-only
+
+AI Access Assistant SessionCore is free software licensed under the GNU Affero
+General Public License, version 3 only.
+
+Copyright (C) 2026 AI Access Assistant contributors
+Copyright notices for adapted upstream work remain with BigPizzaV3 and the
+CodexPlusPlus contributors.
+
+The complete license text is published by the Free Software Foundation at:
+https://www.gnu.org/licenses/agpl-3.0.txt
+
+Redistributors must ship the complete corresponding source, this notice, the
+third-party notices, and a copy of the GNU Affero General Public License
+version 3 with every binary distribution.

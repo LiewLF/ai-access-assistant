@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "product": "AI接入助手",
+  "product_version": "0.12.0",
+  "source_build": 147,
+  "installed_build": 141,
+  "state": "windows-inclusive-reliability-source-verified",
+  "next_build": 148,
+  "target": {
+    "platform": "Windows 11",
+    "minimum_build": 22000,
+    "architectures": ["x64"],
+    "runtime_identifier": "win-x64",
+    "toolchain": ".NET 10 LTS + WinUI 3"
+  },
+  "distribution_boundary": {
+    "app_build_allowed": false,
+    "package_generation_allowed": false,
+    "installation_allowed": false,
+    "release_allowed": false,
+    "windows_artifact_in_macos_package": false,
+    "build150_final_package_limit": 1
+  },
+  "keyboard_contract": {
+    "primary_actions_tabbable": true,
+    "unique_access_keys": ["R", "B", "T", "I", "U", "H"],
+    "control_accelerators": ["Ctrl+R", "Ctrl+B", "Ctrl+T", "Ctrl+I", "Ctrl+U", "Ctrl+H"],
+    "escape_cancels_confirmation": true,
+    "focus_restored_after_dialog_or_operation": true,
+    "collapsed_recovery_action_in_tab_order": false,
+    "keyboard_action_side_effects_equal_pointer_actions": true,
+    "automatic_action_on_focus": false
+  },
+  "screen_reader_contract": {
+    "window_and_sections_named": true,
+    "primary_actions_named_and_described": true,
+    "progress_indicators_named": true,
+    "status_live_setting": "polite",
+    "outcome_live_setting": "polite",
+    "history_list_named": true,
+    "history_items_include_time_size_state": true,
+    "migration_evidence_default_collapsed": true,
+    "raw_secret_path_prompt_response_or_tool_content_announced": false
+  },
+  "high_dpi_contract": {
+    "scales_percent": [100, 200, 300],
+    "narrow_effective_width": 820,
+    "root_vertical_scroll": true,
+    "root_horizontal_scroll": false,
+    "action_groups_vertical_below_threshold": true,
+    "wrapped_status_summary_history_and_preview": true,
+    "fixed_list_item_height": false,
+    "fixed_text_height": false,
+    "ellipsis_for_primary_outcomes": false
+  },
+  "long_path_contract": {
+    "manifest_long_path_aware": true,
+    "legacy_max_path_cap": false,
+    "ordinary_fully_qualified_local_path_over_260_supported": true,
+    "maximum_normalized_characters": 32760,
+    "network_unc_device_relative_or_nul_path": "blocked",
+    "reparse_or_offline_path": "blocked_by_existing_native_policies",
+    "path_truncated_before_io": false,
+    "path_wrapped_when_user_visible": true,
+    "raw_path_in_failure_or_receipt": false
+  },
+  "permission_contract": {
+    "covered_operations": [
+      "readiness_refresh",
+      "basic_verification",
+      "real_task_verification",
+      "continuity_import",
+      "continuity_recovery",
+      "history_refresh",
+      "configuration_transaction"
+    ],
+    "permission_denied_one_conclusion_one_action": true,
+    "path_too_long_one_conclusion_one_action": true,
+    "missing_or_moved_path_one_conclusion_one_action": true,
+    "raw_exception_text_or_path_visible": false,
+    "automatic_retry": false,
+    "automatic_elevation": false,
+    "request_ui_access_or_admin": false,
+    "current_access_and_work_preserved": true
+  },
+  "fixture_contract": {
+    "long_path_characters_greater_than": 260,
+    "long_path_round_trip_without_truncation": true,
+    "unc_and_device_paths_blocked": true,
+    "unauthorized_access_exception_projected": true,
+    "security_exception_projected": true,
+    "path_too_long_exception_projected": true,
+    "directory_not_found_exception_projected": true,
+    "keyboard_names_accelerators_and_tab_order_static_checked": true,
+    "adaptive_visual_state_static_checked": true,
+    "windows_runtime_fixture_state": "defined_not_run_on_macos"
+  },
+  "entrypoint_side_effect_budget": {
+    "process_launch": 0,
+    "network_requests": 0,
+    "credential_reads": 0,
+    "authentication_file_reads": 0,
+    "configuration_writes": 0,
+    "automatic_switches": 0,
+    "paid_tasks": 0
+  },
+  "evidence": {
+    "level": "source_verified",
+    "csharp_compile_state": "unverified_no_local_dotnet",
+    "windows_contract_tests": "defined_not_run_on_macos",
+    "windows_keyboard_runtime": "unverified",
+    "windows_screen_reader_runtime": "unverified",
+    "windows_high_dpi_runtime": "unverified",
+    "windows_long_path_runtime": "unverified",
+    "windows_permission_runtime": "unverified",
+    "macos_product_build_state": "not_built",
+    "package_state": "not_run",
+    "install_state": "not_run",
+    "release_state": "false"
+  },
+  "excluded_scope": [
+    "claim_keyboard_screen_reader_or_high_dpi_runtime_from_xaml_static_checks",
+    "automatic_permission_change_acl_repair_or_elevation",
+    "network_unc_device_reparse_or_offline_path_support",
+    "raw_path_exception_secret_prompt_response_or_tool_content_in_accessibility_output",
+    "automatic_provider_selection_switch_retry_or_validation",
+    "windows_arm64_or_x86",
+    "signed_windows_distribution",
+    "macos_runtime_evidence_as_windows_proof"
+  ],
+  "required_source_gates": [
+    {
+      "id": "windows-inclusive-reliability",
+      "command": "Tests/Shell/test-build147-windows-inclusive-reliability.sh"
+    },
+    {
+      "id": "swift-source-manifest",
+      "command": "Tests/Shell/test-swift-source-manifest.sh"
+    },
+    {
+      "id": "build-input-lock",
+      "command": "python3 Scripts/build_input_contract.py --verify --root . --lock BuildInputs.lock.json --allow-dirty"
+    },
+    {
+      "id": "release-readiness",
+      "command": "python3 Scripts/release_readiness.py --validate --self-test"
+    },
+    {
+      "id": "privacy-license-audit",
+      "command": "Tests/Shell/test-build114-privacy-license-audit.sh"
+    },
+    {
+      "id": "docs-health",
+      "command": "python3 Scripts/docs_health_check.py"
+    }
+  ]
+}

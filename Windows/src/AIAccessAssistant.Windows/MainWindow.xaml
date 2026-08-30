@@ -1,0 +1,315 @@
+<Window
+    x:Class="AIAccessAssistant.Windows.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="AI接入助手 - Windows 接入验证">
+
+    <ScrollViewer
+        x:Name="RootScroller"
+        AutomationProperties.Name="AI接入助手 Windows 主内容"
+        HorizontalScrollBarVisibility="Disabled"
+        VerticalScrollBarVisibility="Auto">
+    <Grid
+        x:Name="RootGrid"
+        AutomationProperties.Name="AI接入助手 Windows"
+        Padding="24"
+        RowSpacing="12">
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="WindowWidthStates">
+                <VisualState x:Name="NarrowLayout">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="0" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="ReadinessActionPanel.Orientation" Value="Vertical" />
+                        <Setter Target="VerificationActionPanel.Orientation" Value="Vertical" />
+                        <Setter Target="ContinuityActionPanel.Orientation" Value="Vertical" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="WideLayout">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="820" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="ReadinessActionPanel.Orientation" Value="Horizontal" />
+                        <Setter Target="VerificationActionPanel.Orientation" Value="Horizontal" />
+                        <Setter Target="ContinuityActionPanel.Orientation" Value="Horizontal" />
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock
+            AutomationProperties.Name="AI接入助手 Windows 接入验证"
+            FontSize="26"
+            FontWeight="SemiBold"
+            Text="AI接入助手 · Windows 接入验证"
+            TextWrapping="Wrap" />
+
+        <TextBlock
+            Grid.Row="1"
+            Margin="0,4,0,0"
+            Text="启动只做只读识别。基础连接和真实任务分别确认，均可能产生一次 API 费用；助手不会自动重试或切换接入。"
+            TextWrapping="Wrap" />
+
+        <StackPanel
+            x:Name="ReadinessActionPanel"
+            Grid.Row="2"
+            Orientation="Vertical"
+            Spacing="12">
+            <Button
+                x:Name="RefreshPreviewButton"
+                AccessKey="R"
+                AutomationProperties.HelpText="只读取受支持的 Codex 安装与脱敏配置，不启动进程或写入文件。快捷键 Ctrl+R。"
+                AutomationProperties.Name="刷新只读识别"
+                Click="RefreshPreview_Click"
+                Content="刷新只读识别"
+                TabIndex="0">
+                <Button.KeyboardAccelerators>
+                    <KeyboardAccelerator Key="R" Modifiers="Control" />
+                </Button.KeyboardAccelerators>
+            </Button>
+            <ProgressRing
+                x:Name="LoadingIndicator"
+                AutomationProperties.Name="只读识别进度"
+                IsTabStop="False"
+                Width="20"
+                Height="20" />
+        </StackPanel>
+
+        <StackPanel
+            Grid.Row="3"
+            AutomationProperties.Name="当前能否工作"
+            Spacing="6">
+            <TextBlock FontSize="18" FontWeight="SemiBold" Text="当前能否工作" />
+            <TextBlock
+                x:Name="CanWorkText"
+                AutomationProperties.LiveSetting="Polite"
+                AutomationProperties.Name="当前工作状态"
+                FontSize="20"
+                FontWeight="SemiBold"
+                Text="等待只读识别"
+                TextWrapping="Wrap" />
+            <TextBlock x:Name="InstallationText" TextWrapping="Wrap" />
+            <TextBlock x:Name="AccessText" TextWrapping="Wrap" />
+            <TextBlock FontWeight="SemiBold" Text="下一步" />
+            <TextBlock
+                x:Name="PrimaryActionText"
+                AutomationProperties.Name="唯一下一步"
+                TextWrapping="Wrap" />
+            <TextBlock FontWeight="SemiBold" Text="如何不丢工作地继续" />
+            <TextBlock
+                x:Name="ContinuationText"
+                AutomationProperties.Name="继续工作说明"
+                TextWrapping="Wrap" />
+        </StackPanel>
+
+        <StackPanel
+            Grid.Row="4"
+            AutomationProperties.Name="可用性验证"
+            Spacing="8">
+            <TextBlock FontSize="18" FontWeight="SemiBold" Text="可用性验证" />
+            <TextBlock
+                x:Name="VerificationStageText"
+                AutomationProperties.LiveSetting="Polite"
+                AutomationProperties.Name="验证阶段"
+                Text="第1步：等待只读识别"
+                TextWrapping="Wrap" />
+            <StackPanel
+                x:Name="VerificationActionPanel"
+                Orientation="Vertical"
+                Spacing="12">
+                <Button
+                    x:Name="BasicVerificationButton"
+                    AccessKey="B"
+                    AutomationProperties.HelpText="先显示可能产生一次 API 费用的确认框；取消不会启动请求。快捷键 Ctrl+B。"
+                    AutomationProperties.Name="第1步 检测基础连接"
+                    Click="BasicVerification_Click"
+                    Content="第1步：检测基础连接"
+                    IsEnabled="False"
+                    TabIndex="1">
+                    <Button.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="B" Modifiers="Control" />
+                    </Button.KeyboardAccelerators>
+                </Button>
+                <Button
+                    x:Name="RealTaskVerificationButton"
+                    AccessKey="T"
+                    AutomationProperties.HelpText="基础连接通过后，另行确认一次真实工具任务；取消不会启动请求。快捷键 Ctrl+T。"
+                    AutomationProperties.Name="第2步 验证真实任务"
+                    Click="RealTaskVerification_Click"
+                    Content="第2步：验证真实任务"
+                    IsEnabled="False"
+                    TabIndex="2">
+                    <Button.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="T" Modifiers="Control" />
+                    </Button.KeyboardAccelerators>
+                </Button>
+                <ProgressRing
+                    x:Name="VerificationIndicator"
+                    AutomationProperties.Name="可用性验证进度"
+                    IsTabStop="False"
+                    Width="20"
+                    Height="20" />
+            </StackPanel>
+            <Expander
+                AutomationProperties.Name="失败证据 脱敏"
+                Header="失败证据（脱敏）"
+                IsExpanded="False"
+                TabIndex="3">
+                <TextBlock
+                    x:Name="VerificationEvidenceText"
+                    Text="尚无失败证据"
+                    TextWrapping="Wrap" />
+            </Expander>
+        </StackPanel>
+
+        <StackPanel
+            Grid.Row="5"
+            AutomationProperties.Name="迁移与历史"
+            Spacing="8">
+            <TextBlock FontSize="18" FontWeight="SemiBold" Text="迁移与历史" />
+            <TextBlock
+                Text="只导入非敏感设置。凭据逐条重录；历史刷新只读取固定 sessions 目录中的文件时间和大小，不读取会话正文。"
+                TextWrapping="Wrap" />
+            <StackPanel
+                x:Name="ContinuityActionPanel"
+                Orientation="Vertical"
+                Spacing="12">
+                <Button
+                    x:Name="ImportContinuityButton"
+                    AccessKey="I"
+                    AutomationProperties.HelpText="选择本机普通 JSON，先零写入预览，再逐项确认。快捷键 Ctrl+I。"
+                    AutomationProperties.Name="导入迁移设置"
+                    Click="ImportContinuity_Click"
+                    Content="导入迁移设置"
+                    TabIndex="4">
+                    <Button.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="I" Modifiers="Control" />
+                    </Button.KeyboardAccelerators>
+                </Button>
+                <Button
+                    x:Name="RecoverContinuityButton"
+                    AccessKey="U"
+                    AutomationProperties.HelpText="按已有事务证据恢复，不自动重新导入。快捷键 Ctrl+U。"
+                    AutomationProperties.Name="恢复上次迁移"
+                    Click="RecoverContinuity_Click"
+                    Content="恢复上次迁移"
+                    TabIndex="5"
+                    Visibility="Collapsed">
+                    <Button.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="U" Modifiers="Control" />
+                    </Button.KeyboardAccelerators>
+                </Button>
+                <Button
+                    x:Name="RefreshHistoryButton"
+                    AccessKey="H"
+                    AutomationProperties.HelpText="只读取固定 sessions 日期目录中的时间、大小和匿名状态。快捷键 Ctrl+H。"
+                    AutomationProperties.Name="刷新历史元数据"
+                    Click="RefreshHistory_Click"
+                    Content="刷新历史元数据"
+                    TabIndex="6">
+                    <Button.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="H" Modifiers="Control" />
+                    </Button.KeyboardAccelerators>
+                </Button>
+                <ProgressRing
+                    x:Name="ContinuityIndicator"
+                    AutomationProperties.Name="迁移与历史操作进度"
+                    IsTabStop="False"
+                    Width="20"
+                    Height="20" />
+            </StackPanel>
+            <TextBlock
+                x:Name="ContinuitySummaryText"
+                AutomationProperties.LiveSetting="Polite"
+                AutomationProperties.Name="迁移与历史结果"
+                Text="尚未选择迁移文件；历史尚未刷新。"
+                TextWrapping="Wrap" />
+            <ListView
+                x:Name="HistoryList"
+                AutomationProperties.HelpText="每项只包含时间、大小、匿名记录标识和可用状态，不含会话正文。"
+                AutomationProperties.Name="本机历史元数据"
+                MaxHeight="240"
+                SelectionMode="None"
+                TabIndex="7">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    </Style>
+                </ListView.ItemContainerStyle>
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+            <Expander
+                AutomationProperties.Name="迁移预览 不含凭据和路径"
+                Header="迁移预览（不含凭据和路径）"
+                IsExpanded="False"
+                TabIndex="8">
+                <TextBlock
+                    x:Name="ContinuityEvidenceText"
+                    Text="尚无迁移预览"
+                    TextWrapping="Wrap" />
+            </Expander>
+        </StackPanel>
+
+        <Expander
+            Grid.Row="6"
+            AutomationProperties.Name="技术详情 脱敏配置预览"
+            Header="技术详情：脱敏 config.toml"
+            IsExpanded="False"
+            TabIndex="9">
+            <Grid RowSpacing="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <TextBlock
+                    x:Name="PathText"
+                    AutomationProperties.Name="配置文件位置"
+                    Text="尚未确认配置路径"
+                    TextWrapping="Wrap" />
+                <TextBox
+                    x:Name="PreviewText"
+                    Grid.Row="1"
+                    AcceptsReturn="True"
+                    AutomationProperties.HelpText="只读脱敏配置，可使用键盘选择和复制。"
+                    AutomationProperties.Name="脱敏配置内容"
+                    FontFamily="Cascadia Mono, Consolas"
+                    HorizontalAlignment="Stretch"
+                    ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                    IsReadOnly="True"
+                    MinHeight="160"
+                    PlaceholderText="未加载配置"
+                    TabIndex="10"
+                    TextWrapping="Wrap"
+                    VerticalAlignment="Stretch"
+                    ScrollViewer.VerticalScrollBarVisibility="Auto" />
+            </Grid>
+        </Expander>
+
+        <InfoBar
+            x:Name="StatusBar"
+            Grid.Row="7"
+            AutomationProperties.LiveSetting="Polite"
+            AutomationProperties.Name="当前操作状态"
+            IsClosable="False"
+            IsOpen="True"
+            Severity="Informational"
+            Title="只读模式" />
+    </Grid>
+    </ScrollViewer>
+</Window>

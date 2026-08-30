@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "product": "AI接入助手",
+  "product_version": "0.12.0",
+  "source_build": 146,
+  "installed_build": 141,
+  "state": "windows-continuity-history-recovery-source-verified",
+  "next_build": 147,
+  "target": {
+    "platform": "Windows 11",
+    "minimum_build": 22000,
+    "architectures": ["x64"],
+    "runtime_identifier": "win-x64",
+    "toolchain": ".NET 10 LTS + WinUI 3"
+  },
+  "distribution_boundary": {
+    "app_build_allowed": false,
+    "package_generation_allowed": false,
+    "installation_allowed": false,
+    "release_allowed": false,
+    "windows_artifact_in_macos_package": false,
+    "build150_final_package_limit": 1
+  },
+  "portable_manifest_contract": {
+    "schema_version": 1,
+    "maximum_bytes": 1048576,
+    "maximum_access_profiles": 1000,
+    "maximum_workspace_labels": 20,
+    "source_platforms": ["macOS", "windows"],
+    "json_unknown_or_duplicate_fields": "blocked",
+    "future_schema": "blocked",
+    "relay_endpoint": "https_no_userinfo_query_or_fragment",
+    "credentials_included": false,
+    "auth_files_included": false,
+    "session_content_included": false,
+    "workspace_paths_included": false,
+    "configuration_files_included": false,
+    "keychain_references_included": false,
+    "preview_required": true,
+    "field_selection_required": true,
+    "credential_reentry_required": true,
+    "writes_allowed_in_manifest": false
+  },
+  "preflight_contract": {
+    "user_selected_regular_json_only": true,
+    "reparse_or_remote_source": "blocked",
+    "source_sha256_bound": true,
+    "target_state_sha256_bound": true,
+    "preview_sha256_bound": true,
+    "selection_sha256_bound": true,
+    "plan_lifetime_seconds": 600,
+    "duplicate_name_or_endpoint": "conflict_blocked",
+    "workspace_label_requires_existing_local_favorite_mapping": true,
+    "preferences_supported": ["start_destination", "history_grouping"],
+    "process_launch": 0,
+    "network_requests": 0,
+    "credential_reads": 0,
+    "configuration_writes": 0
+  },
+  "apply_contract": {
+    "explicit_confirmation_required": true,
+    "new_relay_profiles_only": true,
+    "credential_required_per_relay": true,
+    "maximum_credential_bytes": 2560,
+    "credential_storage": "Windows_Credential_Manager_application_namespace",
+    "credential_target": "lowercase_sha256_of_local_profile_id_first_32_hex",
+    "imported_verification_state": "always_unverified",
+    "current_access_preserved": true,
+    "codex_configuration_preserved": true,
+    "automatic_switch": false,
+    "automatic_validation": false,
+    "process_launch": 0,
+    "network_requests": 0,
+    "named_mutex": "Local\\io.github.liewlf.aiaccessassistant.continuity.v1",
+    "state_replace": "same_directory_write_through_replacefile_mandatory_backup",
+    "source_or_target_drift": "blocked_repreview_required"
+  },
+  "recovery_contract": {
+    "journal_schema_version": 1,
+    "journal_location": "fixed_application_local_data_directory",
+    "journal_contains_secret_source_path_target_path_or_session_content": false,
+    "journal_fields": [
+      "transaction_id",
+      "phase",
+      "source_sha256",
+      "preview_sha256",
+      "selection_sha256",
+      "before_state_sha256",
+      "target_state_sha256",
+      "credential_target_suffixes",
+      "backup_relative_name"
+    ],
+    "phases": [
+      "prepared",
+      "credentials_written",
+      "state_applied",
+      "committed",
+      "rollback_required",
+      "rolled_back",
+      "rollback_failed"
+    ],
+    "pending_journal_blocks_new_import": true,
+    "recovery_requires_explicit_user_action": true,
+    "rollback_restores_previous_state_before_deleting_new_credentials": true,
+    "ambiguous_state": "preserve_journal_and_backup_require_recovery",
+    "automatic_retry": false,
+    "raw_secret_in_journal_log_receipt": false
+  },
+  "history_contract": {
+    "root": "fixed_CODEX_HOME_sessions_only",
+    "maximum_session_files": 10000,
+    "maximum_entries_per_directory": 12000,
+    "expected_layout": "sessions/YYYY/MM/DD/*.jsonl",
+    "recursive_general_scan": false,
+    "reparse_or_offline_entry": "blocked",
+    "session_file_bytes_read": 0,
+    "session_prompt_response_tool_content_read": false,
+    "returned_identity": "sha256_of_relative_path_and_metadata",
+    "returned_fields": ["opaque_id", "last_write_utc", "byte_count", "state"],
+    "sort": "last_write_descending_then_opaque_id",
+    "cloud_index_or_upload": false
+  },
+  "production_ui_contract": {
+    "passive_startup_file_picker_or_history_scan": 0,
+    "import_button_opens_user_file_picker": true,
+    "preview_before_selection_or_write": true,
+    "credential_reentry_per_selected_relay": true,
+    "final_confirmation_required": true,
+    "pending_recovery_has_one_primary_action": true,
+    "history_refresh_explicit": true,
+    "technical_evidence_default_collapsed": true
+  },
+  "evidence": {
+    "level": "source_verified",
+    "csharp_compile_state": "unverified_no_local_dotnet",
+    "windows_contract_tests": "defined_not_run_on_macos",
+    "windows_runtime_state": "unverified",
+    "windows_user_journey_state": "unverified",
+    "macos_product_build_state": "not_built",
+    "package_state": "not_run",
+    "install_state": "not_run",
+    "release_state": "false"
+  },
+  "excluded_scope": [
+    "credential_auth_file_session_body_or_workspace_path_transfer",
+    "import_or_copy_codex_session_files",
+    "automatic_provider_selection_switch_retry_or_validation",
+    "overwrite_existing_relay_profile_or_credential",
+    "background_history_scan_or_cloud_index",
+    "raw_path_or_content_in_receipt_or_journal",
+    "windows_arm64_or_x86",
+    "signed_windows_distribution",
+    "macos_runtime_evidence_as_windows_proof"
+  ],
+  "required_source_gates": [
+    {
+      "id": "windows-continuity-history-recovery",
+      "command": "Tests/Shell/test-build146-windows-continuity-recovery.sh"
+    },
+    {
+      "id": "swift-source-manifest",
+      "command": "Tests/Shell/test-swift-source-manifest.sh"
+    },
+    {
+      "id": "build-input-lock",
+      "command": "python3 Scripts/build_input_contract.py --verify --root . --lock BuildInputs.lock.json --allow-dirty"
+    },
+    {
+      "id": "release-readiness",
+      "command": "python3 Scripts/release_readiness.py --validate --self-test"
+    },
+    {
+      "id": "privacy-license-audit",
+      "command": "Tests/Shell/test-build114-privacy-license-audit.sh"
+    },
+    {
+      "id": "docs-health",
+      "command": "python3 Scripts/docs_health_check.py"
+    }
+  ]
+}

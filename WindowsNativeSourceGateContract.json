@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "product": "AI接入助手",
+  "product_version": "0.12.0",
+  "source_build": 148,
+  "installed_build": 141,
+  "state": "windows-native-source-gate-defined-not-run",
+  "next_build": 149,
+  "target": {
+    "user_platform": "Windows 11",
+    "minimum_build": 22000,
+    "architectures": [
+      "x64"
+    ],
+    "runtime_identifier": "win-x64",
+    "target_framework": "net10.0-windows10.0.26100.0",
+    "windows_app_sdk": "2.3.1",
+    "windows_sdk_build_tools": "10.0.26100.8249"
+  },
+  "toolchain": {
+    "dotnet_sdk": "10.0.100",
+    "dotnet_roll_forward": "latestFeature",
+    "github_runner": "windows-2025-vs2026",
+    "runner_architecture": "x64",
+    "runner_scope": "Windows_Server_2025_CI_not_Windows_11_user_runtime",
+    "session_core_target": "x86_64-pc-windows-msvc"
+  },
+  "workflow_source_gate": {
+    "path": ".github/workflows/windows-mvp.yml",
+    "name": "Windows 11 x64 Native Source Gate",
+    "triggers": [
+      "pull_request_with_bounded_paths",
+      "workflow_dispatch"
+    ],
+    "pull_request_target": false,
+    "workflow_run": false,
+    "push_trigger": false,
+    "permissions": {
+      "contents": "read"
+    },
+    "checkout_action": "actions/checkout@v7",
+    "checkout_persist_credentials": false,
+    "setup_dotnet_action": "actions/setup-dotnet@v6",
+    "setup_dotnet_global_json": "Windows/global.json",
+    "timeout_minutes": 30,
+    "steps": [
+      "restore_windows_solution",
+      "build_windows_solution_release_no_restore_no_appx",
+      "run_all_core_contracts",
+      "check_session_core_windows_msvc",
+      "verify_pe_identity_and_no_package_boundary"
+    ],
+    "package_portable_invoked": false,
+    "installer_build_invoked": false,
+    "installer_test_invoked": false,
+    "artifact_upload_invoked": false,
+    "release_or_deploy_invoked": false,
+    "repository_secret_read": false
+  },
+  "binary_identity_contract": {
+    "product_version": "0.12.0",
+    "assembly_version": "0.12.0.0",
+    "file_version": "0.12.0.148",
+    "informational_version_prefix": "0.12.0+build.148",
+    "format": "PE32+",
+    "machine": "AMD64",
+    "distribution_signature_expected": false,
+    "msix_tooling_enabled": false,
+    "windows_package_type": "None"
+  },
+  "no_package_contract": {
+    "dotnet_publish_allowed": false,
+    "portable_zip_allowed": false,
+    "installer_generation_allowed": false,
+    "installer_execution_allowed": false,
+    "artifact_upload_allowed": false,
+    "macos_app_or_dmg_generation_allowed": false,
+    "installation_allowed": false,
+    "external_publish_allowed": false,
+    "windows_binary_in_macos_package": false,
+    "build150_final_package_limit": 1,
+    "build150_final_package_scope": "macos-arm64-current-flow"
+  },
+  "native_evidence": {
+    "workflow_definition": "source_verified",
+    "workflow_run": "not_run_no_external_publish_authorization",
+    "csharp_compile": "unverified",
+    "xaml_compile": "unverified",
+    "core_contract_tests": "defined_not_run_on_windows",
+    "session_core_windows_compile": "defined_not_run_on_windows",
+    "pe_identity": "defined_not_run_on_windows",
+    "windows_11_user_runtime": "unverified",
+    "installer_runtime": "not_run",
+    "package_state": "not_run",
+    "release_state": false
+  },
+  "source_gate_scope": {
+    "all_build142_through_build148_core_contracts_in_one_windows_process": true,
+    "native_compile_may_run_only_after_external_workflow_authorization": true,
+    "native_compile_output_is_ephemeral_and_not_uploaded": true,
+    "source_gate_executable_is_not_a_distribution_candidate": true,
+    "windows_server_ci_does_not_prove_windows_11_user_journey": true,
+    "final_package_flow_must_rescan_source_for_secrets": true
+  },
+  "required_source_gates": [
+    {
+      "id": "windows-native-source-gate",
+      "command": "Tests/Shell/test-build148-windows-native-source-gate.sh"
+    },
+    {
+      "id": "swift-source-manifest",
+      "command": "Tests/Shell/test-swift-source-manifest.sh"
+    },
+    {
+      "id": "build-input-lock",
+      "command": "python3 Scripts/build_input_contract.py --verify --root . --lock BuildInputs.lock.json --allow-dirty"
+    },
+    {
+      "id": "release-readiness",
+      "command": "python3 Scripts/release_readiness.py --validate --self-test"
+    },
+    {
+      "id": "privacy-license-audit",
+      "command": "Tests/Shell/test-build114-privacy-license-audit.sh"
+    },
+    {
+      "id": "docs-health",
+      "command": "python3 Scripts/docs_health_check.py"
+    }
+  ],
+  "excluded_scope": [
+    "run_or_dispatch_github_actions_without_external_authorization",
+    "claim_windows_compile_or_runtime_from_local_static_validation",
+    "dotnet_publish_compress_archive_inno_setup_or_installer_execution",
+    "artifact_upload_release_deploy_or_public_support_claim",
+    "windows_arm64_x86_msix_or_signed_distribution",
+    "windows_binary_inside_macos_app_dmg_or_source_receipt",
+    "automatic_provider_switch_retry_elevation_or_paid_task",
+    "treat_windows_server_runner_as_windows_11_user_runtime"
+  ]
+}

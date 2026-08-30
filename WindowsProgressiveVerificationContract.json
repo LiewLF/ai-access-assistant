@@ -1,0 +1,172 @@
+{
+  "schema_version": 1,
+  "product": "AI接入助手",
+  "product_version": "0.12.0",
+  "source_build": 145,
+  "installed_build": 141,
+  "state": "windows-progressive-verification-source-verified",
+  "next_build": 146,
+  "target": {
+    "platform": "Windows 11",
+    "minimum_build": 22000,
+    "architectures": ["x64"],
+    "runtime_identifier": "win-x64",
+    "toolchain": ".NET 10 LTS + WinUI 3"
+  },
+  "distribution_boundary": {
+    "app_build_allowed": false,
+    "package_generation_allowed": false,
+    "installation_allowed": false,
+    "release_allowed": false,
+    "windows_artifact_in_macos_package": false,
+    "build150_final_package_limit": 1
+  },
+  "process_quiescence_contract": {
+    "bounded_process_candidates": 128,
+    "candidate_names": ["codex", "codex-cli"],
+    "current_process_excluded": true,
+    "exact_inspected_executable_match_preferred": true,
+    "different_executable_same_name": "blocked_possible_writer",
+    "inaccessible_or_ambiguous_candidate": "blocked_possible_writer",
+    "automatic_close_or_kill_existing_process": false,
+    "user_action_when_busy": "close_codex_then_recheck",
+    "configuration_apply_requires": "quiet_before_preview_and_immediately_before_apply",
+    "app_peer_serialisation": "Local\\io.github.liewlf.aiaccessassistant.config.v1",
+    "supported_codex_writer_quiescence": "source_verified",
+    "arbitrary_external_writer_atomic_cas": "not_claimed"
+  },
+  "progressive_verification_contract": {
+    "stages": [
+      "needs_basic",
+      "checking_basic",
+      "basic_failed",
+      "needs_real_task",
+      "verifying_real_task",
+      "real_task_failed",
+      "ready",
+      "blocked"
+    ],
+    "basic_connection": {
+      "separate_explicit_consent": true,
+      "maximum_model_requests": 1,
+      "may_cost_money": true,
+      "timeout_seconds": 60,
+      "success_requires": "turn_started_exact_marker_reply_turn_completed_exit_zero"
+    },
+    "real_task": {
+      "separate_explicit_consent": true,
+      "maximum_model_requests": 1,
+      "may_cost_money": true,
+      "timeout_seconds": 90,
+      "success_requires": "turn_started_tool_started_tool_completed_marker_output_continuation_exact_final_turn_completed_exit_zero"
+    },
+    "maximum_captured_bytes_per_stream": 524288,
+    "workspace": "new_bounded_local_temporary_directory_per_attempt",
+    "successful_result_requires_cleanup": true,
+    "timeout_or_cancel_termination_scope": "owned_validation_process_tree_only",
+    "session_persistence": false,
+    "configuration_binding": "sha256_before_and_after_attempt",
+    "executable_binding": "exact_discovered_path_plus_sha256",
+    "official_authentication": "child_codex_uses_existing_login_assistant_does_not_read_auth_json",
+    "relay_credential": "explicit_Credential_Manager_read_then_child_only_environment_injection",
+    "relay_target_suffix": "lowercase_sha256_of_provider_id_first_32_hex",
+    "credential_buffer": "zero_after_process_start",
+    "automatic_retry": false,
+    "automatic_switch": false,
+    "background_validation": false
+  },
+  "failure_model_contract": {
+    "maximum_primary_actions": 1,
+    "raw_exception_or_process_output_in_user_evidence": false,
+    "evidence_fields": ["step", "stage", "category", "safe_http_status"],
+    "safe_http_status_range": [100, 599],
+    "stages": [
+      "preparation",
+      "login",
+      "quota",
+      "connection",
+      "initial_response",
+      "tool_call",
+      "tool_execution",
+      "continuation",
+      "final_response",
+      "configuration_changed",
+      "cleanup",
+      "timeout",
+      "unknown"
+    ],
+    "quota_requires_explicit_signal": true,
+    "http_403_is_not_automatically_api_key_error": true,
+    "tls_bypass_allowed": false,
+    "unknown_failure_action": "open_advanced_diagnostics"
+  },
+  "receipt_contract": {
+    "lifetime_seconds": 86400,
+    "request_count": 1,
+    "provider_identity": "sha256_only",
+    "configuration_identity": "sha256",
+    "executable_identity": "sha256",
+    "event_structure_identity": "sha256",
+    "raw_provider_id_address_prompt_response_tool_output_secret_or_path_allowed": false,
+    "failed_basic_blocks_real_task": true,
+    "configuration_or_executable_drift_invalidates_receipt": true
+  },
+  "production_ui_contract": {
+    "passive_startup_process_or_network": 0,
+    "basic_button_requires_confirmation_dialog": true,
+    "real_task_button_requires_separate_confirmation_dialog": true,
+    "cancel_process_network_or_credential_reads": 0,
+    "maximum_simultaneous_validation_operations": 1,
+    "failed_state_uses_one_primary_action": true,
+    "technical_evidence_default_collapsed": true
+  },
+  "evidence": {
+    "level": "source_verified",
+    "csharp_compile_state": "unverified_no_local_dotnet",
+    "windows_contract_tests": "defined_not_run_on_macos",
+    "windows_runtime_state": "unverified",
+    "windows_user_journey_state": "unverified",
+    "macos_product_build_state": "not_built",
+    "package_state": "not_run",
+    "install_state": "not_run",
+    "release_state": "false"
+  },
+  "excluded_scope": [
+    "automatic_provider_selection_switch_or_retry",
+    "automatic_paid_task",
+    "background_quota_or_validation_polling",
+    "assistant_auth_json_read_or_token_refresh",
+    "raw_model_or_tool_content_persistence",
+    "force_terminate_existing_user_codex_process",
+    "claim_atomic_cas_against_arbitrary_external_writers",
+    "windows_arm64_or_x86",
+    "signed_windows_distribution",
+    "macos_runtime_evidence_as_windows_proof"
+  ],
+  "required_source_gates": [
+    {
+      "id": "windows-progressive-verification",
+      "command": "Tests/Shell/test-build145-windows-progressive-verification.sh"
+    },
+    {
+      "id": "swift-source-manifest",
+      "command": "Tests/Shell/test-swift-source-manifest.sh"
+    },
+    {
+      "id": "build-input-lock",
+      "command": "python3 Scripts/build_input_contract.py --verify --root . --lock BuildInputs.lock.json --allow-dirty"
+    },
+    {
+      "id": "release-readiness",
+      "command": "python3 Scripts/release_readiness.py --validate --self-test"
+    },
+    {
+      "id": "privacy-license-audit",
+      "command": "Tests/Shell/test-build114-privacy-license-audit.sh"
+    },
+    {
+      "id": "docs-health",
+      "command": "python3 Scripts/docs_health_check.py"
+    }
+  ]
+}

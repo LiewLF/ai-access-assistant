@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "product": "AI接入助手",
+  "product_version": "0.12.0",
+  "source_build": 143,
+  "installed_build": 141,
+  "state": "windows-codex-readiness-source-verified",
+  "next_build": 144,
+  "target": {
+    "platform": "Windows 11",
+    "minimum_build": 22000,
+    "architectures": [
+      "x64"
+    ],
+    "runtime_identifier": "win-x64",
+    "toolchain": ".NET 10 LTS + WinUI 3"
+  },
+  "distribution_boundary": {
+    "app_build_allowed": false,
+    "package_generation_allowed": false,
+    "installation_allowed": false,
+    "release_allowed": false,
+    "windows_artifact_in_macos_package": false,
+    "build150_final_package_limit": 1
+  },
+  "recognition_contract": {
+    "installation": {
+      "candidate_order": [
+        "PATH",
+        "%USERPROFILE%\\.codex\\bin",
+        "%LOCALAPPDATA%\\Programs\\Codex"
+      ],
+      "candidate_names": [
+        "codex.exe",
+        "codex.cmd",
+        "codex.ps1"
+      ],
+      "maximum_path_directories": 128,
+      "maximum_path_depth": 64,
+      "recursive_scan_allowed": false,
+      "network_or_device_paths_allowed": false,
+      "reparse_points_allowed": false,
+      "exe_evidence": "MZ header plus bounded sanitized FileVersionInfo",
+      "npm_shim_maximum_bytes": 65536,
+      "npm_package_metadata_maximum_bytes": 262144,
+      "not_found_semantics": "not found in supported bounded locations only"
+    },
+    "current_access": {
+      "configuration_source": "single redacted config.toml preview",
+      "root_model_provider_absent": "official_default_unverified",
+      "root_model_provider_openai": "official_explicit_unverified",
+      "root_model_provider_other": "relay_selected_unverified",
+      "nested_provider_fields": "ignored",
+      "duplicate_or_invalid_root_provider": "blocked_fail_closed",
+      "raw_provider_id_in_summary_allowed": false,
+      "provider_address_in_summary_allowed": false,
+      "credential_read_allowed": false,
+      "auth_json_read_allowed": false
+    }
+  },
+  "user_outcomes": [
+    {
+      "id": "can_work_now",
+      "states": [
+        "not_ready",
+        "needs_attention",
+        "unverified"
+      ],
+      "runtime_ready_claim_allowed": false
+    },
+    {
+      "id": "next_safe_action",
+      "maximum_primary_actions": 1,
+      "paid_or_real_task_requires_separate_confirmation": true
+    },
+    {
+      "id": "continue_without_losing_work",
+      "message": "read-only recognition changed no configuration, credential, or task"
+    }
+  ],
+  "side_effect_budget": {
+    "process_launch": 0,
+    "network_requests": 0,
+    "credential_reads": 0,
+    "auth_file_reads": 0,
+    "configuration_writes": 0,
+    "other_file_writes": 0,
+    "recursive_scans": 0,
+    "automatic_switches": 0,
+    "paid_tasks": 0
+  },
+  "evidence": {
+    "level": "source_verified",
+    "csharp_compile_state": "unverified_no_local_dotnet",
+    "windows_runtime_state": "unverified",
+    "windows_user_journey_state": "unverified",
+    "macos_product_build_state": "not_built",
+    "package_state": "not_run",
+    "install_state": "not_run",
+    "release_state": "false"
+  },
+  "excluded_scope": [
+    "launch_codex",
+    "read_authentication_or_quota",
+    "validate_real_task",
+    "switch_official_or_relay",
+    "write_configuration",
+    "scan_entire_disk_or_user_profile",
+    "windows_arm64_or_x86",
+    "signed_windows_distribution",
+    "macos_runtime_evidence_as_windows_proof"
+  ],
+  "required_source_gates": [
+    {
+      "id": "windows-codex-readiness",
+      "command": "Tests/Shell/test-build143-windows-readiness.sh"
+    },
+    {
+      "id": "swift-source-manifest",
+      "command": "Tests/Shell/test-swift-source-manifest.sh"
+    },
+    {
+      "id": "build-input-lock",
+      "command": "python3 Scripts/build_input_contract.py --verify --root . --lock BuildInputs.lock.json --allow-dirty"
+    },
+    {
+      "id": "release-readiness",
+      "command": "python3 Scripts/release_readiness.py --validate --self-test"
+    },
+    {
+      "id": "privacy-license-audit",
+      "command": "Tests/Shell/test-build114-privacy-license-audit.sh"
+    },
+    {
+      "id": "docs-health",
+      "command": "python3 Scripts/docs_health_check.py"
+    }
+  ]
+}
