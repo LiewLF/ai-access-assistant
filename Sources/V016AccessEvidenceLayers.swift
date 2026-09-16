@@ -38,7 +38,7 @@ enum V016AccessEvidenceLayerResolver {
         case .checkingBasicConnection:
             status = "检测中"
         case .basicConnectionFailed:
-            status = "本次未通过"
+            status = "最近一次检测未通过"
         case .realTaskRequired, .checkingRealTask,
                 .realTaskReady, .realTaskFailed:
             status = "当前基础连接已通过"
@@ -62,7 +62,7 @@ enum V016AccessEvidenceLayerResolver {
     ) -> V016AccessEvidenceLayer {
         let status: String
         switch decision.code {
-        case .routeUnknown:
+        case .routeUnknown, .currentStateReadRequired:
             status = "尚未读取"
         case .readingCurrentState:
             status = "读取中"
@@ -71,7 +71,7 @@ enum V016AccessEvidenceLayerResolver {
         case .basicConnectionRequired:
             status = "缺少匹配当前接入的证据"
         case .basicConnectionFailed:
-            status = "当前检测未通过"
+            status = "匹配当前接入的最近检测未通过"
         case .runtimeChanged:
             status = decision.primaryAction == .verifyRealTask
                 ? "当前基础证据有效" : "旧版本证据已失效"
@@ -87,7 +87,9 @@ enum V016AccessEvidenceLayerResolver {
         return V016AccessEvidenceLayer(
             kind: .currentAccess,
             status: status,
-            detail: "只有证据同时匹配当前接入、配置和 Codex 版本，才算当前新鲜证据。"
+            detail: decision.code == .basicConnectionFailed
+                ? "失败记录已匹配当前接入、配置和有效期；该记录不包含Codex版本，不能证明当前版本已验证。"
+                : "只有证据同时匹配当前接入、配置和 Codex 版本，才算当前新鲜证据。"
         )
     }
 
@@ -104,6 +106,10 @@ enum V016AccessEvidenceLayerResolver {
             status = "未通过"
         case .runtimeChanged:
             status = "需重新验证"
+        case .recoveryPending:
+            status = "就绪状态已暂停；恢复后核对"
+        case .currentStateReadRequired:
+            status = "待核对验证记录"
         default:
             status = "未验证"
         }

@@ -80,7 +80,7 @@ final class V011AccessModel:
     @Published private(set) var portableContinuityRecoveryError:
         String?
     @Published private(set) var recoveryDisposition:
-        V011RecoveryDisposition = .none
+        V011RecoveryDisposition = .unread
     @Published private(set) var recoveryRepairPreview:
         V014RecoveryRepairPreview?
     @Published private(set) var isCurrentConnectionVerified =
@@ -90,9 +90,7 @@ final class V011AccessModel:
     @Published private(set) var recoveryNextAction: String?
     @Published private(set) var recoveryProtectsNewSessions =
         false
-    /// Redacted, copyable recovery evidence for support. SwiftUI reads this
-    /// memory snapshot; transaction files are inspected only during an
-    /// explicit/background refresh or export action.
+    /// Redacted details loaded during explicit refresh or export.
     @Published private(set) var recoveryDiagnosticSummary = """
     transaction_id=unavailable
     phase=unavailable
@@ -179,22 +177,18 @@ final class V011AccessModel:
         CodexCompatibilityEvidence?
     @Published private(set) var currentConnectionCheckError:
         String?
-    @Published private(set) var currentConnectionReceipt:
-        V011ConnectionReceipt?
-    @Published private(set) var agentLoopReceipt:
-        V011AgentLoopReceipt?
+    @Published private(set) var currentConnectionReceipt: V011ConnectionReceipt?
+    @Published private(set) var agentLoopReceipt: V011AgentLoopReceipt?
+    @Published private(set) var agentLoopCompletedUsage: V012CompletedTurnUsage?
     @Published private(set) var isAgentLoopVerified = false
     @Published private(set) var agentLoopErrorMessage: String?
-    @Published private(set) var officialUsageSnapshot:
-        V011OfficialUsageSnapshot?
+    @Published private(set) var officialUsageSnapshot: V011OfficialUsageSnapshot?
     @Published private(set) var isRefreshingOfficialUsage = false
     @Published private(set) var officialUsageErrorMessage: String?
-    @Published private(set) var officialUsageFailurePresentation:
-        V013FailurePresentation?
-    @Published private(set) var savedRelayReadinessReceipts:
-        [String: V011SavedRelayReadinessReceipt] = [:]
-    @Published private(set) var savedRelayReadinessMatches:
-        [String: Bool] = [:]
+    @Published private(set) var officialUsageFailurePresentation: V013FailurePresentation?
+    @Published private(set) var officialUsageRefreshFailedAt: Date?
+    @Published private(set) var savedRelayReadinessReceipts: [String: V011SavedRelayReadinessReceipt] = [:]
+    @Published private(set) var savedRelayReadinessMatches: [String: Bool] = [:]
     @Published private(set) var verifyingSavedRelayReadinessID:
         String?
     @Published private(set) var savedRelayReadinessErrors:
@@ -350,21 +344,18 @@ final class V011AccessModel:
         portableContinuityRecoveryError = recovery.errorMessage
     }
 
-    var canRefreshOfficialUsage: Bool {
-        guard case .official? = liveState?.mode else {
-            return false
-        }
-        return !isRefreshingOfficialUsage
-            && !isWorking
-            && !isVerifyingAgentLoop
-            && verifyingSavedRelayReadinessID == nil
+    var officialUsageRefreshAvailability: V011OfficialUsageRefreshAvailability {
+        V011OfficialUsageRefreshAvailability(
+            isBusy: isRefreshingOfficialUsage || isWorking || isVerifyingAgentLoop
+                || verifyingSavedRelayReadinessID != nil)
     }
 
-    var currentConnectionFailurePresentation:
-        V013FailurePresentation? {
-        V013FailurePresentation.connection(
-            currentConnectionHealthObservation
-        )
+    var canRefreshOfficialUsage: Bool {
+        officialUsageRefreshAvailability == .available
+    }
+
+    var currentConnectionFailurePresentation: V013FailurePresentation? {
+        connectionPresentation.currentConnectionFailurePresentation
     }
 
     var compatibilityFailurePresentation:
@@ -381,7 +372,7 @@ final class V011AccessModel:
               let stage = agentLoopReceipt.failureStage else {
             return nil
         }
-        return V013FailurePresentation.agentLoop(stage)
+        return V013FailurePresentation.agentLoop(stage, reason: agentLoopReceipt.failureReason)
     }
 
     var officialUsageFreshnessText: String? {
@@ -389,25 +380,24 @@ final class V011AccessModel:
             return nil
         }
         let prefix = snapshot.isFresh(at: dependencies.now())
-            ? "刚刚读取" : "上次读取，已过期"
+            ? "上次成功读取，仍在有效期内" : "上次成功读取，已过期"
         return "\(prefix) · \(snapshot.observedAt.formatted(date: .abbreviated, time: .shortened))"
     }
 
-    var officialUsageCardPresentation:
-        V011OfficialUsageCardPresentation {
+    var officialUsageCardPresentation: V011OfficialUsageCardPresentation {
         V011OfficialUsageCardPresentation.make(
             snapshot: officialUsageSnapshot,
-            now: dependencies.now()
-        )
+            now: dependencies.now(),
+            refreshFailedAt: officialUsageRefreshFailedAt,
+            refreshAvailability: officialUsageRefreshAvailability)
     }
 
     func refreshOfficialUsage(threadID: String? = nil) {
         userReadinessController.refreshOfficialUsage(threadID: threadID)
     }
 
-    var userReadinessUsesOfficialAccess: Bool {
-        if case .official? = liveState?.mode { return true }
-        return false
+    var officialUsageRefreshUnavailableReason: String? {
+        officialUsageRefreshAvailability.unavailableReason
     }
 
     func userReadinessOfficialUsageDidReject(_ message: String) {
@@ -418,23 +408,24 @@ final class V011AccessModel:
         isRefreshingOfficialUsage = true
         officialUsageErrorMessage = nil
         officialUsageFailurePresentation = nil
+        officialUsageRefreshFailedAt = nil
     }
 
     func userReadinessOfficialUsageDidBecomeIdle() {
         isRefreshingOfficialUsage = false
     }
 
-    func userReadinessOfficialUsageDidReceive(
-        _ outcome: V011OfficialUsageRefreshOutcome
-    ) {
+    func userReadinessOfficialUsageDidReceive(_ outcome: V011OfficialUsageRefreshOutcome) {
         switch outcome {
         case let .success(snapshot):
             officialUsageSnapshot = snapshot
             officialUsageErrorMessage = nil
             officialUsageFailurePresentation = nil
+            officialUsageRefreshFailedAt = nil
         case let .failure(presentation):
             officialUsageFailurePresentation = presentation
             officialUsageErrorMessage = presentation.conclusion
+            officialUsageRefreshFailedAt = dependencies.now()
         case .cancelled:
             return
         }
@@ -659,6 +650,8 @@ final class V011AccessModel:
         recoveryPresentation.canRecoverPendingSwitch
     }
 
+    var recoveryStatusTitle: String { recoveryPresentation.statusTitle }
+
     var hasExecutableRecoveryAction: Bool {
         recoveryPresentation.hasExecutableRecoveryAction
     }
@@ -748,14 +741,21 @@ final class V011AccessModel:
         bundleIdentifier == CodexApplicationLocator.bundleIdentifier
     }
 
-    /// Keeps view appearance free of process, network, credential and
-    /// configuration side effects. The user can request a full refresh with
-    /// the visible “重新读取状态” action.
     func preparePresentation() {
-        guard liveState == nil,
-              !isWorking,
-              !isRefreshing else { return }
-        status = "已读取本机资料；点“重新读取状态”核对Codex当前接入"
+        guard liveState == nil, !isWorking, !isRefreshing else { return }
+        do {
+            let snapshot = try V011PassiveAccessStateReader.read(
+                dependencies: dependencies, managedState: managedState)
+            liveState = snapshot.live
+            currentConnectionReceipt = snapshot.connectionReceipt
+            agentLoopReceipt = snapshot.agentLoopReceipt
+            applyRecoveryContext(snapshot.recovery)
+            errorMessage = snapshot.errorMessage ?? snapshot.recovery.detail
+            status = snapshot.status
+        } catch {
+            status = "暂时无法读取Codex当前接入"
+            errorMessage = V011RecoveryErrorText.safeDetail(error)
+        }
     }
 
     func refresh() {
@@ -829,12 +829,24 @@ final class V011AccessModel:
     func accessRefreshDidObserveRecovery(
         _ recovery: V011PendingRecoveryContext
     ) {
-        recoveryDisposition = recovery.disposition
+        applyRecoveryContext(recovery)
         guard recovery.pending else { return }
-        hasPendingRecovery = true
         status = recovery.disposition == .decisionRequired
             ? "上次切换没有完成，当前设置已保留"
             : "发现上次未完成的操作，可继续最小修复"
+    }
+
+    private func applyRecoveryContext(_ recovery: V011PendingRecoveryContext?) {
+        guard let recovery else {
+            recoveryDisposition = .unread
+            return
+        }
+        hasPendingRecovery = recovery.pending
+        recoveryDisposition = recovery.disposition
+        recoveryFailureStageText = recovery.stage
+        recoveryNextAction = recovery.nextAction
+        recoveryProtectsNewSessions = recovery.protectsNewSessions
+        recoveryRepairPreview = recovery.preview
     }
 
     private func applyRefreshLoaded(
@@ -846,8 +858,7 @@ final class V011AccessModel:
         managedState = result.managed
         liveState = result.live
         compatibilityEvidence = result.compatibilityEvidence
-        hasPendingRecovery = result.pending
-        recoveryDisposition = recovery.disposition
+        applyRecoveryContext(recovery)
         currentConnectionReceipt = result.connectionReceipt
         agentLoopReceipt = result.agentLoopReceipt
         isAgentLoopVerified = result.agentLoopMatches
@@ -856,7 +867,7 @@ final class V011AccessModel:
             result.savedRelayReadinessReceipts
         savedRelayReadinessMatches = result.savedRelayReadinessMatches
         recoveryDiagnosticSummary = result.recoveryDiagnosticSummary
-        reloadProviderProbeReceipts()
+        capabilityEvidenceController.reloadReceipts()
         if presentation.shouldClearConnectionFailure {
             currentConnectionCheckError = nil
             currentConnectionCheckErrorConfigHash = nil
@@ -868,10 +879,6 @@ final class V011AccessModel:
         verifiedEndpointHost = presentation.verifiedEndpointHost
         currentSessionProviderCheck =
             presentation.currentSessionProviderCheck
-        recoveryFailureStageText = recovery.stage
-        recoveryNextAction = recovery.nextAction
-        recoveryProtectsNewSessions = recovery.protectsNewSessions
-        recoveryRepairPreview = recovery.preview
         status = presentation.status
         errorMessage = presentation.errorMessage
     }
@@ -879,7 +886,6 @@ final class V011AccessModel:
     private func applyRefreshFailed(
         _ failed: V011AccessRefreshFailed
     ) {
-        let recovery = failed.recovery
         liveState = nil
         compatibilityEvidence = nil
         isCurrentConnectionVerified = false
@@ -888,13 +894,7 @@ final class V011AccessModel:
         isAgentLoopVerified = false
         agentLoopErrorMessage = nil
         savedRelayReadinessMatches = [:]
-        hasPendingRecovery = recovery?.pending ?? false
-        recoveryDisposition = recovery?.disposition ?? .none
-        recoveryFailureStageText = recovery?.stage
-        recoveryNextAction = recovery?.nextAction
-        recoveryProtectsNewSessions =
-            recovery?.protectsNewSessions ?? false
-        recoveryRepairPreview = recovery?.preview
+        applyRecoveryContext(failed.recovery)
         status = failed.status
         errorMessage = failed.errorMessage
     }
@@ -994,6 +994,7 @@ final class V011AccessModel:
     func connectionVerificationAgentLoopDidBegin() {
         isVerifyingAgentLoop = true
         isAgentLoopVerified = false
+        agentLoopCompletedUsage = nil
         agentLoopErrorMessage = nil
         status = "正在隔离环境验证真实工具调用和续答"
     }
@@ -1001,13 +1002,12 @@ final class V011AccessModel:
     func connectionVerificationAgentLoopDidVerify(
         _ result: V011AgentLoopVerificationResult
     ) {
-        applyAgentLoopResult(
-            result.probeResult,
-            matchesCurrent: result.matchesCurrent
-        )
-        status = result.matchesCurrent
-            ? "真实任务闭环已通过"
-            : "基础连接已通过；真实任务闭环未通过"
+        liveState = result.currentState.live
+        compatibilityEvidence = result.currentState.compatibilityEvidence
+        currentRuntimeFreshness = result.currentState.runtimeFreshness
+        hasPendingRecovery = result.currentState.pending
+        applyAgentLoopResult(result.probeResult, matchesCurrent: result.matchesCurrent)
+        status = result.matchesCurrent ? "真实任务闭环已通过" : "真实任务证据与当前状态不匹配"
     }
 
     func connectionVerificationAgentLoopDidFail(
@@ -1104,10 +1104,9 @@ final class V011AccessModel:
         }
     }
 
-    func addRelay(
-        draft: CodexRelayProfile,
-        apiKey: String
-    ) {
+    var isAddingRelay: Bool { savedRelayController.isAdding }
+    func cancelAddingRelay() { savedRelayController.cancelAddition() }
+    func addRelay(draft: CodexRelayProfile, apiKey: String) {
         savedRelayController.add(draft: draft, apiKey: apiKey)
     }
 
@@ -1196,6 +1195,7 @@ final class V011AccessModel:
     func capabilityEvidenceOptionalProbeDidSucceed(
         _ result: V011OptionalProviderProbeActionResult
     ) {
+        capabilityEvidenceController.invalidateReceiptReload()
         providerProbeReceipts = result.allReceipts
         status = result.differences.isEmpty
             ? "扩展能力真实探针已保存"
@@ -1239,6 +1239,7 @@ final class V011AccessModel:
     ) {
         switch outcome {
         case let .success(result):
+            capabilityEvidenceController.invalidateReceiptReload()
             providerProbeReceipts = result.allReceipts
             capabilityEvidenceErrorMessage = nil
             isWorking = false
@@ -1607,9 +1608,9 @@ final class V011AccessModel:
     func switchControllerDidBecomeIdle() {
         isWorking = false
     }
-
-    func switchControllerRequestsRefresh() {
-        refresh()
+    func switchControllerRequestsRefresh(completion: (() -> Void)?) {
+        guard allowsAccessRefreshStart else { return }
+        refreshController.request(reason: .manual, debounceNanoseconds: 0, completion: completion)
     }
 
     private var connectionPresentation:
@@ -1694,11 +1695,7 @@ final class V011AccessModel:
     }
 
     private func loadPassivePresentationState() {
-        do {
-            managedState = try stateStore.load()
-        } catch {
-            managedState = .empty
-        }
+        managedState = (try? stateStore.load()) ?? .empty
     }
 
     private var connectionHealthService:
@@ -1717,6 +1714,8 @@ final class V011AccessModel:
         isAgentLoopVerified =
             matchesCurrent
                 && result.receipt.outcome == .passed
+        agentLoopCompletedUsage = isAgentLoopVerified
+            ? result.completedUsage : nil
         agentLoopErrorMessage = isAgentLoopVerified
             ? nil : result.safeMessage
     }
@@ -1756,30 +1755,27 @@ final class V011AccessModel:
     private func applyCurrentConnectionCapabilityUpdate(
         _ update: V011CurrentConnectionCapabilityUpdate
     ) {
+        capabilityEvidenceController.invalidateReceiptReload()
         if let receipts = update.receipts {
             providerProbeReceipts = receipts
         }
         capabilityEvidenceErrorMessage = update.errorMessage
     }
 
-    private var providerCapabilityEvidenceService:
-        V011ProviderCapabilityEvidenceService {
-        V011ProviderCapabilityEvidenceService(
-            controlRoot: dependencies.controlRoot,
-            keyProvider: dependencies.keyProvider
-        )
+    var hasPendingCapabilityReceiptRead: Bool {
+        capabilityEvidenceController.hasPendingReceiptRead
     }
 
-    private func reloadProviderProbeReceipts() {
-        do {
-            providerProbeReceipts =
-                try providerCapabilityEvidenceService.load()
+    func capabilityEvidenceReceiptReloadDidReceive(
+        _ result: V011CapabilityEvidenceReloadResult
+    ) {
+        switch result {
+        case let .loaded(receipts):
+            providerProbeReceipts = receipts
             capabilityEvidenceErrorMessage = nil
-        } catch {
+        case let .failed(message):
             providerProbeReceipts = []
-            capabilityEvidenceErrorMessage =
-                "扩展能力验证记录无法读取："
-                + error.localizedDescription
+            capabilityEvidenceErrorMessage = message
         }
     }
 

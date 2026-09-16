@@ -213,122 +213,120 @@ struct ConfigurationHealthView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("配置体检")
-                            .font(.system(size: 28, weight: .bold))
-                        Text("配置存在不等于能够运行。安全、常用参数、成本、结构和真实请求分开判断。")
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("重新体检") { refreshAction() }
-                        .buttonStyle(.borderedProminent)
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("配置体检")
+                        .font(.system(size: 28, weight: .bold))
+                    Text("配置存在不等于能够运行。安全、常用参数、成本、结构和真实请求分开判断。")
+                        .foregroundStyle(.secondary)
                 }
+                Spacer()
+                Button("重新体检") { refreshAction() }
+                    .buttonStyle(.borderedProminent)
+            }
 
-                if let report = model.configurationHealth {
-                    let managedModelCatalogBlocker = report.items.contains {
-                        $0.title == "受管模型目录"
-                            && $0.state == .blocked
-                    }
-                    let managedModelCatalogIssue = report.items.contains {
-                        $0.title == "受管模型目录"
-                            && ($0.state == .blocked || $0.state == .warning)
-                    }
-                    let catalogDismissed = managedModelCatalogIssue
-                        && isCatalogDismissed(report)
-                    capabilitySummaryCard(
-                        report.capabilitySummary
-                    )
-                    Label(
-                        report.hasBlocker ? "存在阻断项，不执行自动写入" : "没有发现已知阻断项",
-                        systemImage: report.hasBlocker ? "xmark.octagon.fill" : "checkmark.shield.fill"
-                    )
-                    .foregroundStyle(report.hasBlocker ? Color.red : Color.green)
-                    .font(.headline)
-                    if let lifecycle = catalogWarningLifecycle {
-                        Text(warningLifecycleSummary(lifecycle))
+            if let report = model.configurationHealth {
+                let managedModelCatalogBlocker = report.items.contains {
+                    $0.title == "受管模型目录"
+                        && $0.state == .blocked
+                }
+                let managedModelCatalogIssue = report.items.contains {
+                    $0.title == "受管模型目录"
+                        && ($0.state == .blocked || $0.state == .warning)
+                }
+                let catalogDismissed = managedModelCatalogIssue
+                    && isCatalogDismissed(report)
+                capabilitySummaryCard(
+                    report.capabilitySummary
+                )
+                Label(
+                    report.hasBlocker ? "存在阻断项，不执行自动写入" : "没有发现已知阻断项",
+                    systemImage: report.hasBlocker ? "xmark.octagon.fill" : "checkmark.shield.fill"
+                )
+                .foregroundStyle(report.hasBlocker ? Color.red : Color.green)
+                .font(.headline)
+                if let lifecycle = catalogWarningLifecycle {
+                    Text(warningLifecycleSummary(lifecycle))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if report.hasBlocker,
+                   onOpenExtensions != nil
+                    || onOpenGuide != nil
+                    || onOpenRecovery != nil {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("这些阻断项都有真入口可处理。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                    }
-                    if report.hasBlocker,
-                       onOpenExtensions != nil
-                        || onOpenGuide != nil
-                        || onOpenRecovery != nil {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("这些阻断项都有真入口可处理。")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            HStack(spacing: 8) {
-                                if let onOpenExtensions {
-                                    Button(
-                                        managedModelCatalogBlocker
-                                            ? "处理受管模型目录"
-                                            : "打开扩展能力"
-                                    ) {
-                                        if managedModelCatalogBlocker {
-                                            presentCatalogResolution(report)
-                                        } else {
-                                            onOpenExtensions()
-                                        }
-                                    }
-                                    .buttonStyle(.bordered)
-                                }
-                                if let onOpenGuide {
-                                    Button("打开使用说明") {
-                                        onOpenGuide()
-                                    }
-                                    .buttonStyle(.bordered)
-                                }
-                                if let onOpenRecovery {
-                                    Button("打开恢复入口") {
-                                        onOpenRecovery()
-                                    }
-                                    .buttonStyle(.bordered)
-                                }
-                            }
-                            if managedModelCatalogBlocker {
-                                Text(
-                                    "处理入口：软件与能力 > 扩展能力 > 导入受管模型目录。"
-                                )
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    if managedModelCatalogIssue,
-                       !catalogDismissed,
-                       !report.hasBlocker {
                         HStack(spacing: 8) {
-                            Text("受管模型目录需要核对。")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                            Button("处理受管模型目录") {
-                                presentCatalogResolution(report)
+                            if let onOpenExtensions {
+                                Button(
+                                    managedModelCatalogBlocker
+                                        ? "处理受管模型目录"
+                                        : "打开扩展能力"
+                                ) {
+                                    if managedModelCatalogBlocker {
+                                        presentCatalogResolution(report)
+                                    } else {
+                                        onOpenExtensions()
+                                    }
+                                }
+                                .buttonStyle(.bordered)
                             }
-                            .buttonStyle(.bordered)
+                            if let onOpenGuide {
+                                Button("打开使用说明") {
+                                    onOpenGuide()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                            if let onOpenRecovery {
+                                Button("打开恢复入口") {
+                                    onOpenRecovery()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                        if managedModelCatalogBlocker {
+                            Text(
+                                "处理入口：软件与能力 > 扩展能力 > 导入受管模型目录。"
+                            )
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                         }
                     }
-                    DisclosureGroup("查看技术详情") {
-                        technicalDetails(
-                            report,
-                            onOpenExtensions: onOpenExtensions
-                        )
-                            .padding(.top, 10)
-                    }
-                } else {
-                    ContentUnavailableView(
-                        "尚未体检",
-                        systemImage: "stethoscope",
-                        description: Text("点击“重新体检”。只读取白名单配置并先遮挡敏感字段。")
-                    )
                 }
+                if managedModelCatalogIssue,
+                   !catalogDismissed,
+                   !report.hasBlocker {
+                    HStack(spacing: 8) {
+                        Text("受管模型目录需要核对。")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Button("处理受管模型目录") {
+                            presentCatalogResolution(report)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                DisclosureGroup("查看技术详情") {
+                    technicalDetails(
+                        report,
+                        onOpenExtensions: onOpenExtensions
+                    )
+                        .padding(.top, 10)
+                }
+            } else {
+                ContentUnavailableView(
+                    "尚未体检",
+                    systemImage: "stethoscope",
+                    description: Text("点击“重新体检”。只读取白名单配置并先遮挡敏感字段。")
+                )
             }
-            .padding(28)
-            .frame(maxWidth: 1_000, alignment: .leading)
-            .frame(maxWidth: .infinity)
         }
+        .padding(28)
+        .frame(maxWidth: 1_000, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .onAppear {
             if model.configurationHealth == nil {
                 refreshAction()

@@ -64,9 +64,12 @@ struct V011CurrentConnectionVerifier: @unchecked Sendable {
             case .official:
                 try runtimeVerifier.verifyOfficial()
             case let .relay(profile, _, _, secret):
-                if let relayVerifier {
+                if let secret, let relayVerifier {
                     try await relayVerifier(profile, secret)
                 } else {
+                    // A local gateway holds no inline key, so an HTTP probe
+                    // could only send an unauthenticated request. The bounded
+                    // runtime check is the proof that stays available.
                     try runtimeVerifier.verifyRelay(profile)
                 }
             }

@@ -19,6 +19,21 @@ struct V011AccessRecoveryPresentation: @unchecked Sendable {
     let isRefreshingOfficialUsage: Bool
     let verifyingSavedRelayReadinessID: String?
 
+    var statusTitle: String {
+        switch recoveryDisposition {
+        case .unread:
+            return "恢复状态尚未确认，请先读取当前状态"
+        case .decisionRequired:
+            return "上次切换没有完成，当前设置已保留。"
+        case .recoverable:
+            return "发现未完成操作，可继续最小修复"
+        case .none:
+            return hasPendingRecovery
+                ? "发现未完成操作，请先读取当前状态"
+                : "没有待恢复的切换操作"
+        }
+    }
+
     var canRunDeterministicRepair: Bool {
         hasExecutableRecoveryAction
             && recoveryRepairPreview?.totalCount ?? 0 > 0
@@ -27,6 +42,8 @@ struct V011AccessRecoveryPresentation: @unchecked Sendable {
 
     var deterministicRepairPreviewSummary: String {
         switch recoveryDisposition {
+        case .unread:
+            return "已保存的恢复记录尚未完成核对；先离线读取状态，再选择适用的处理方式。"
         case .recoverable:
             guard let recoveryRepairPreview else {
                 return "正在读取已有恢复点；没有可核对的预览前不会执行修复。"
@@ -50,6 +67,9 @@ struct V011AccessRecoveryPresentation: @unchecked Sendable {
     var canKeepCurrentStateAndEndPendingSwitch: Bool {
         hasPendingRecovery
             && recoveryDisposition == .decisionRequired
+            && recoveryRepairPreview?.switchCount == 1
+            && recoveryRepairPreview?.adoptionCount == 0
+            && recoveryRepairPreview?.deletionCount == 0
             && !interactionBusy
     }
 

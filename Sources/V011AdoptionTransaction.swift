@@ -84,18 +84,22 @@ struct V011AdoptionJournalStore {
         )
     }
 
+    func pendingReadOnly() throws -> [V011AdoptionJournal] {
+        try all(readOnly: true).filter(\.phase.isPending)
+    }
+
     func pending() throws -> [V011AdoptionJournal] {
         try all().filter(\.phase.isPending)
             .sorted { $0.startedAt < $1.startedAt }
     }
 
-    private func all() throws -> [V011AdoptionJournal] {
+    private func all(readOnly: Bool = false) throws -> [V011AdoptionJournal] {
         guard FileManager.default.fileExists(
             atPath: rootURL.path
         ) else {
             return []
         }
-        try prepareRoot()
+        try prepareRoot(readOnly: readOnly)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try FileManager.default.contentsOfDirectory(
@@ -126,7 +130,7 @@ struct V011AdoptionJournalStore {
         }
     }
 
-    private func prepareRoot() throws {
+    private func prepareRoot(readOnly: Bool = false) throws {
         if FileManager.default.fileExists(
             atPath: rootURL.path
         ) {
@@ -142,12 +146,14 @@ struct V011AdoptionJournalStore {
                     .invalidJournal
             }
         } else {
+            guard !readOnly else { throw V011AdoptionTransactionError.invalidJournal }
             try FileManager.default.createDirectory(
                 at: rootURL,
                 withIntermediateDirectories: true,
                 attributes: [.posixPermissions: 0o700]
             )
         }
+        guard !readOnly else { return }
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o700],
             ofItemAtPath: rootURL.path

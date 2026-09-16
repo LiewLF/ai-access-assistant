@@ -10,15 +10,28 @@ struct BeginnerRelayDraftView: View {
     let onChooseScreenshots: () -> Void
     let protocolIsSupported: Bool
     let protocolCompatibilityMessage: String
+    let primaryActionTitle: String
     let addRelayDisabled: Bool
     let synchronizeFastModeWithServiceTier:
         (ProviderServiceTierKind) -> Void
     let checkRelayDraft: () -> Void
+    let readRelayDraftModels: () -> Void
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 officialContinuationCard
+                if model.isFetchingModels {
+                    Button("取消读取模型") { model.cancelModelFetch() }
+                        .accessibilityIdentifier("relay.cancel-model-read")
+                }
+                if accessModel.isAddingRelay {
+                    Button("取消添加") { accessModel.cancelAddingRelay() }
+                        .accessibilityIdentifier("relay.cancel-addition")
+                    Text("检测期间可取消；离开本页也会取消检测。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 sourceSection
                 fieldsSection
 
@@ -26,7 +39,7 @@ struct BeginnerRelayDraftView: View {
                     checkRelayDraft()
                 } label: {
                     Label(
-                        "检测并添加",
+                        primaryActionTitle,
                         systemImage:
                             "checkmark.shield.fill"
                     )
@@ -45,6 +58,10 @@ struct BeginnerRelayDraftView: View {
             .padding(28)
             .frame(maxWidth: 920, alignment: .leading)
             .frame(maxWidth: .infinity)
+        }
+        .onDisappear {
+            model.cancelModelFetch()
+            accessModel.cancelAddingRelay()
         }
     }
 
@@ -106,6 +123,8 @@ struct BeginnerRelayDraftView: View {
                     text:
                         $model.pastedConfigurationText
                 )
+                .accessibilityLabel("中转配置说明")
+                .accessibilityHint("粘贴配置说明后，选择整理粘贴文字。密钥请在下方安全输入框填写。")
                 .frame(minHeight: 80)
                 .padding(8)
                 .background(
@@ -121,6 +140,7 @@ struct BeginnerRelayDraftView: View {
                             .foregroundStyle(.tertiary)
                             .padding(13)
                             .allowsHitTesting(false)
+                            .accessibilityHidden(true)
                     }
                 }
                 HStack {
@@ -166,6 +186,7 @@ struct BeginnerRelayDraftView: View {
                         text: $model.providerName
                     )
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("中转名称")
                 }
                 labeledField("中转接口地址（Base URL）") {
                     VStack(alignment: .leading, spacing: 5) {
@@ -174,11 +195,25 @@ struct BeginnerRelayDraftView: View {
                             text: $model.baseURL
                         )
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("中转接口地址")
                         Text(
                             "这是中转网站提供的服务地址，通常以 /v1 结尾。"
                         )
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        if !model.baseURL.isEmpty, let issue = V011RelayEndpointPolicy.draftIssue(
+                            model.baseURL, localGatewayConfirmed: model.confirmsLocalGateway
+                        ) {
+                            Text(issue)
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                                .accessibilityIdentifier("build199.relay.address-issue")
+                        }
+                        if model.isLocalGateway {
+                            Toggle("这是我手动填写的本机网关，只对当前配置档放行",
+                                isOn: $model.confirmsLocalGateway)
+                                .font(.caption)
+                        }
                     }
                 }
                 labeledField("接入协议（中转与Codex的沟通方式）") {
@@ -219,6 +254,7 @@ struct BeginnerRelayDraftView: View {
                             text: $model.apiKey
                         )
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("中转密钥")
                         Text(
                             "启用中转时，密钥会写入本机Codex设置，并限制为只有当前用户可读；切回官方时自动移除。它不是“零落盘”。"
                         )
@@ -241,6 +277,7 @@ struct BeginnerRelayDraftView: View {
                         text: $model.newModelName
                     )
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("模型名称")
                     Button("添加") {
                         model.addModel()
                     }
@@ -249,10 +286,11 @@ struct BeginnerRelayDraftView: View {
                             ? "正在读取"
                             : "读取模型"
                     ) {
-                        model.fetchModels()
+                        readRelayDraftModels()
                     }
                     .disabled(
                         model.isFetchingModels
+                            || addRelayDisabled
                             || model.baseURL.isEmpty
                             || model.apiKey.isEmpty
                     )
@@ -400,6 +438,7 @@ struct BeginnerRelayDraftView: View {
                             text: $model.contextWindow
                         )
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("上下文长度，可留空")
                         Text(
                             "模型可用上下文上限。只填模型或Provider明确给出的值；填大不会扩容，反而可能使请求失败。留空沿用默认值。"
                         )
@@ -415,6 +454,7 @@ struct BeginnerRelayDraftView: View {
                                 $model.autoCompactTokenLimit
                         )
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("本地自动压缩阈值，可留空")
                         Text(
                             "Codex本机达到此阈值后压缩历史；必须小于上下文长度。它不等于在线压缩。留空沿用默认值。"
                         )
@@ -529,6 +569,7 @@ struct BeginnerRelayDraftView: View {
                                     $model.serviceTierCustomValue
                             )
                             .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("自定义速度档")
                         }
                         Text(
                             CapabilityOptionHelp.serviceTier(
@@ -626,6 +667,7 @@ struct BeginnerRelayDraftView: View {
                                 $model.providerCompatibilityName
                         )
                         .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Provider兼容名称")
                         .disabled(
                             model.remoteCompactionSetting == .enabled
                         )

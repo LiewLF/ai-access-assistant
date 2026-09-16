@@ -16,68 +16,67 @@ struct BeginnerConnectionHealthToolView: View {
     let openTransactions: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Text("排障入口")
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Button("验证扩展能力") {
-                        verificationOpen = true
+        ScrollView {
+            VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Text("排障入口")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Button("验证扩展能力") {
+                            verificationOpen = true
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
-                    .buttonStyle(.borderedProminent)
+                    HStack(spacing: 8) {
+                        Button("打开切换模式") {
+                            openAccessSection(.switchMode)
+                        }
+                        Button("打开扩展能力") {
+                            openSettingsSection(.capabilities)
+                        }
+                        Button("打开事务详情") {
+                            openTransactions()
+                        }
+                        Button("打开使用说明") {
+                            openSettingsSection(.guide)
+                        }
+                    }
+                    .buttonStyle(.bordered)
                 }
-                HStack(spacing: 8) {
-                    Button("打开切换模式") {
-                        openAccessSection(.switchMode)
-                    }
-                    Button("打开扩展能力") {
+                .padding(.horizontal, 18)
+                .padding(.vertical, 10)
+                .frame(maxWidth: 860)
+                .frame(maxWidth: .infinity)
+
+                Divider()
+
+                connectionHealthHistoryView
+
+                Divider()
+
+                ConfigurationHealthView(
+                    model: model,
+                    refreshAction: {
+                        model.refreshConfigurationHealth(
+                            using: accessModel
+                        )
+                    },
+                    onOpenExtensions: {
                         openSettingsSection(.capabilities)
-                    }
-                    Button("打开事务详情") {
+                    },
+                    onCopyAsManaged: { request in
+                        accessModel.copyExternalModelCatalogAsManaged(request)
+                        openSettingsSection(.capabilities)
+                    },
+                    onOpenGuide: {
+                        openSettingsSection(.guide)
+                    },
+                    onOpenRecovery: {
                         openTransactions()
                     }
-                    Button("打开使用说明") {
-                        openSettingsSection(.guide)
-                    }
-                }
-                .buttonStyle(.bordered)
+                )
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 10)
-            .frame(maxWidth: 860)
-            .frame(maxWidth: .infinity)
-
-            Divider()
-
-            ScrollView {
-                connectionHealthHistoryView
-            }
-            .frame(minHeight: 220, idealHeight: 300, maxHeight: 340)
-
-            Divider()
-
-            ConfigurationHealthView(
-                model: model,
-                refreshAction: {
-                    model.refreshConfigurationHealth(
-                        using: accessModel
-                    )
-                },
-                onOpenExtensions: {
-                    openSettingsSection(.capabilities)
-                },
-                onCopyAsManaged: { request in
-                    accessModel.copyExternalModelCatalogAsManaged(request)
-                    openSettingsSection(.capabilities)
-                },
-                onOpenGuide: {
-                    openSettingsSection(.guide)
-                },
-                onOpenRecovery: {
-                    openTransactions()
-                }
-            )
         }
     }
 

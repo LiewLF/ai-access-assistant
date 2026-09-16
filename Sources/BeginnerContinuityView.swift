@@ -5,54 +5,11 @@ import UniformTypeIdentifiers
 private let portableContinuityTargetChoiceRequired =
     "__portable_continuity_target_choice_required__"
 
-private struct PortableContinuityRelayImportForm:
-    Identifiable, Equatable {
-    let id: UUID
-    let displayName: String
-    let baseURL: String
-    let defaultModel: String
-    var isSelected: Bool
-    var targetProfileID: String
-    var useIncomingDisplayName: Bool
-    var useIncomingBaseURL: Bool
-    var useIncomingDefaultModel: Bool
-    var credential: String
-}
-
-private struct PortableContinuityWorkspaceImportForm:
-    Identifiable, Equatable {
-    let id: UUID
-    let label: String
-    var isSelected: Bool
-    var targetPath: String
-}
-
 struct BeginnerContinuityExportView: View {
     @ObservedObject var accessModel: V011AccessModel
     @ObservedObject var historyModel: V011HistoryModel
     @Binding var isImportWorking: Bool
-
-    @State private var snapshot:
-        PortableContinuityExportSnapshot?
-    @State private var selection = PortableContinuitySelection(
-        accessProfiles: true,
-        workspaceLabels: true,
-        startDestination: false,
-        historyGrouping: false
-    )
-    @State private var previewStatus = "正在生成本机预览…"
-    @State private var exportStatus: String?
-    @State private var importPreview:
-        PortableContinuityImportPreview?
-    @State private var importSession:
-        PortableContinuityImportSession?
-    @State private var relayImportForms:
-        [PortableContinuityRelayImportForm] = []
-    @State private var workspaceImportForms:
-        [PortableContinuityWorkspaceImportForm] = []
-    @State private var importConfirmed = false
-    @State private var importStatus =
-        "尚未选择迁移设置文件。"
+    @ObservedObject var draft: BeginnerContinuityViewState
 
     var body: some View {
         ScrollView {
@@ -80,8 +37,8 @@ struct BeginnerContinuityExportView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(
-                        snapshot == nil
-                            || !selection.hasSelectedField
+                        draft.snapshot == nil
+                            || !draft.selection.hasSelectedField
                     )
                     .accessibilityIdentifier(
                         "build130.continuity-export"
@@ -90,7 +47,7 @@ struct BeginnerContinuityExportView: View {
                         "打开保存位置；取消不会写入文件"
                     )
                 }
-                if let exportStatus {
+                if let exportStatus = draft.exportStatus {
                     Text(exportStatus)
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -105,16 +62,16 @@ struct BeginnerContinuityExportView: View {
             .frame(maxWidth: .infinity)
         }
         .onAppear {
-            if snapshot == nil {
+            if draft.snapshot == nil {
                 refreshPreview()
             }
             accessModel.refreshPortableContinuityRecoveryState()
         }
-        .onChange(of: relayImportForms) { _, _ in
-            importConfirmed = false
+        .onChange(of: draft.relayImportForms) { _, _ in
+            draft.importConfirmed = false
         }
-        .onChange(of: workspaceImportForms) { _, _ in
-            importConfirmed = false
+        .onChange(of: draft.workspaceImportForms) { _, _ in
+            draft.importConfirmed = false
         }
     }
 
@@ -148,16 +105,16 @@ struct BeginnerContinuityExportView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("选择导出字段")
                 .font(.headline)
-            Toggle("接入资料：名称、HTTPS地址、默认模型、Responses协议", isOn: $selection.accessProfiles)
-            Toggle("工作区标签：只保留标签文字，使用新匿名ID", isOn: $selection.workspaceLabels)
-            Toggle("启动页默认值：开始", isOn: $selection.startDestination)
-            Toggle("历史分组默认值：工作区", isOn: $selection.historyGrouping)
+            Toggle("接入资料：名称、HTTPS地址、默认模型、Responses协议", isOn: $draft.selection.accessProfiles)
+            Toggle("工作区标签：只保留标签文字，使用新匿名ID", isOn: $draft.selection.workspaceLabels)
+            Toggle("启动页默认值：开始", isOn: $draft.selection.startDestination)
+            Toggle("历史分组默认值：工作区", isOn: $draft.selection.historyGrouping)
             Text(
                 "后两项目前是产品默认值，不是单独保存的个人选择，因此默认不勾选。"
             )
             .font(.caption)
             .foregroundStyle(.secondary)
-            if !selection.hasSelectedField {
+            if !draft.selection.hasSelectedField {
                 Label(
                     "至少选择一项才能导出",
                     systemImage: "exclamationmark.triangle.fill"
@@ -185,7 +142,7 @@ struct BeginnerContinuityExportView: View {
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
             }
-            if let snapshot {
+            if let snapshot = draft.snapshot {
                 Text("接入资料 \(snapshot.accessProfiles.count) 项")
                     .font(.subheadline.weight(.semibold))
                 ForEach(snapshot.accessProfiles, id: \.id) { profile in
@@ -234,7 +191,7 @@ struct BeginnerContinuityExportView: View {
                 ProgressView()
                     .controlSize(.small)
             }
-            Text(previewStatus)
+            Text(draft.previewStatus)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -247,7 +204,7 @@ struct BeginnerContinuityExportView: View {
     }
 
     private func refreshPreview() {
-        exportStatus = nil
+        draft.exportStatus = nil
         let relaySources = accessModel.savedProfiles.map { profile in
             PortableContinuityRelaySource(
                 sourceIdentifier: profile.id,
@@ -272,25 +229,25 @@ struct BeginnerContinuityExportView: View {
                 )
             }
         do {
-            snapshot = try PortableContinuityExportPlanner.snapshot(
+            draft.snapshot = try PortableContinuityExportPlanner.snapshot(
                 sourceVersion: AppReleaseMetadata.version,
                 sourceBuild: AppReleaseMetadata.build,
                 relaySources: relaySources,
                 workspaceSources: workspaceSources
             )
-            previewStatus =
+            draft.previewStatus =
                 "预览来自当前内存状态；未读取凭据、未联网、未写文件。"
         } catch {
-            snapshot = nil
-            previewStatus = "无法生成安全预览；未写入文件。"
+            draft.snapshot = nil
+            draft.previewStatus = "无法生成安全预览；未写入文件。"
         }
     }
 
     private func exportSelection() {
-        guard let snapshot,
-            selection.hasSelectedField
+        guard let snapshot = draft.snapshot,
+            draft.selection.hasSelectedField
         else {
-            exportStatus = "至少选择一项；未写入文件。"
+            draft.exportStatus = "至少选择一项；未写入文件。"
             return
         }
         let panel = NSSavePanel()
@@ -301,21 +258,21 @@ struct BeginnerContinuityExportView: View {
         guard panel.runModal() == .OK,
             let destinationURL = panel.url
         else {
-            exportStatus = "已取消导出；未写入文件。"
+            draft.exportStatus = "已取消导出；未写入文件。"
             return
         }
         do {
             let manifest = try snapshot.manifest(
-                selection: selection
+                selection: draft.selection
             )
             try PortableContinuityAtomicExporter.write(
                 manifest,
                 to: destinationURL
             )
-            exportStatus =
+            draft.exportStatus =
                 "已原子导出所选非敏感设置；未联网、未读取凭据。"
         } catch {
-            exportStatus = "导出失败；目标位置未留下半成品。"
+            draft.exportStatus = "导出失败；目标位置未留下半成品。"
         }
     }
 
@@ -380,14 +337,14 @@ struct BeginnerContinuityExportView: View {
             .accessibilityHint(
                 "只读取所选普通JSON文件；取消时不读取文件也不写入设置"
             )
-            Text(importStatus)
+            Text(draft.importStatus)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier(
                     "build133.continuity-import-result"
                 )
 
-            if let importPreview {
+            if let importPreview = draft.importPreview {
                 HStack(alignment: .firstTextBaseline) {
                     Text(
                         "来源 \(importPreview.sourceVersion) (\(importPreview.sourceBuild)) · \(importPreview.sourcePlatform.rawValue)"
@@ -415,16 +372,16 @@ struct BeginnerContinuityExportView: View {
                     }
                 }
 
-                if !relayImportForms.isEmpty {
+                if !draft.relayImportForms.isEmpty {
                     Divider()
                     Text("选择中转字段并重新输入凭据")
                         .font(.subheadline.weight(.semibold))
-                    ForEach($relayImportForms) { $form in
+                    ForEach($draft.relayImportForms) { $form in
                         relayImportEditor($form)
                     }
                 }
 
-                if !workspaceImportForms.isEmpty {
+                if !draft.workspaceImportForms.isEmpty {
                     Divider()
                     Text("把标签绑定到本机工作区")
                         .font(.subheadline.weight(.semibold))
@@ -433,7 +390,7 @@ struct BeginnerContinuityExportView: View {
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
-                    ForEach($workspaceImportForms) { $form in
+                    ForEach($draft.workspaceImportForms) { $form in
                         workspaceImportEditor($form)
                     }
                 }
@@ -452,12 +409,19 @@ struct BeginnerContinuityExportView: View {
                 Divider()
                 Toggle(
                     "我已核对上述来源、字段、目标工作区和凭据，确认执行本次导入",
-                    isOn: $importConfirmed
+                    isOn: $draft.importConfirmed
                 )
                 .disabled(
                     isImportWorking
                         || accessModel.hasPendingPortableContinuityImport
                 )
+                if let issue = importEligibility.issue {
+                    Label(issue, systemImage: "info.circle")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("continuity.import-eligibility")
+                }
                 Button("确认并导入所选内容") {
                     applyConfirmedImport()
                 }
@@ -505,8 +469,9 @@ struct BeginnerContinuityExportView: View {
                     }
                     Text("新增为一条中转").tag("")
                     ForEach(accessModel.savedProfiles) { profile in
-                        Text("更新：\(profile.name)")
+                        Text("更新：\(profile.name)\(importTargetIssue(profile.id) == nil ? "" : "（暂不可更新）")")
                             .tag(profile.id)
+                            .disabled(importTargetIssue(profile.id) != nil)
                     }
                 }
                 .pickerStyle(.menu)
@@ -534,14 +499,20 @@ struct BeginnerContinuityExportView: View {
                         isOn: form.useIncomingDefaultModel
                     )
                 }
-                SecureField(
-                    "在目标设备重新输入这条中转的 API Key",
-                    text: form.credential
-                )
-                .textFieldStyle(.roundedBorder)
-                Text("凭据只写入本机Keychain；不会保存到迁移文件或恢复记录。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if let issue = importTargetIssue(form.wrappedValue.targetProfileID) {
+                    Label(issue, systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                } else {
+                    SecureField(
+                        "在目标设备重新输入这条中转的 API Key",
+                        text: form.credential
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    Text("凭据只写入本机Keychain；不会保存到迁移文件或恢复记录。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(10)
@@ -587,42 +558,28 @@ struct BeginnerContinuityExportView: View {
         )
     }
 
-    private var canApplyImport: Bool {
-        guard importSession != nil,
-            importConfirmed,
-            !isImportWorking,
-            !accessModel.isWorking,
-            !accessModel.hasPendingPortableContinuityImport
-        else { return false }
-        let relays = relayImportForms.filter(\.isSelected)
-        let workspaces = workspaceImportForms.filter(\.isSelected)
-        guard !relays.isEmpty || !workspaces.isEmpty else {
-            return false
-        }
-        guard relays.allSatisfy({ form in
-            !form.credential.trimmingCharacters(
-                in: .whitespacesAndNewlines
-            ).isEmpty
-                && (form.targetProfileID.isEmpty
-                    || accessModel.savedProfiles.contains(where: {
-                        $0.id == form.targetProfileID
-                    }))
-        }) else {
-            return false
-        }
-        let existingTargetIDs = relays.compactMap {
-            $0.targetProfileID.isEmpty ? nil : $0.targetProfileID
-        }
-        guard Set(existingTargetIDs).count == existingTargetIDs.count else {
-            return false
-        }
-        guard workspaces.allSatisfy({
-            historyModel.favoriteWorkspacePaths.contains($0.targetPath)
-        }) else {
-            return false
-        }
-        let targetPaths = workspaces.map(\.targetPath)
-        return Set(targetPaths).count == targetPaths.count
+    private var importEligibility: PortableContinuityImportEligibility {
+        .evaluate(
+            hasSession: draft.importSession != nil, confirmed: draft.importConfirmed,
+            isBusy: isImportWorking || accessModel.isWorking,
+            hasPendingImport: accessModel.hasPendingPortableContinuityImport,
+            relays: draft.relayImportForms.filter(\.isSelected).map { form in
+                .init(targetID: form.targetProfileID,
+                      hasCredential: !form.credential.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      targetIssue: importTargetIssue(form.targetProfileID))
+            },
+            workspaces: draft.workspaceImportForms.filter(\.isSelected).map { form in
+                .init(targetPath: form.targetPath,
+                      isFavorite: historyModel.favoriteWorkspacePaths.contains(form.targetPath))
+            })
+    }
+
+    private var canApplyImport: Bool { importEligibility.canApply }
+
+    private func importTargetIssue(_ targetID: String) -> String? {
+        PortableContinuityTargetPolicy.selectionIssue(
+            targetID: targetID, state: accessModel.managedState,
+            protectedProviderID: draft.importSession?.protectedProviderID ?? accessModel.currentProviderID)
     }
 
     private func workspaceTargetTitle(_ path: String) -> String {
@@ -708,26 +665,26 @@ struct BeginnerContinuityExportView: View {
             let sourceURL = panel.url
         else {
             resetImportDraft()
-            importStatus =
+            draft.importStatus =
                 "已取消导入预检；未读取文件、未写入设置。"
             return
         }
         resetImportDraft()
         isImportWorking = true
-        importStatus = "正在只读预检所选文件和当前设置…"
+        draft.importStatus = "正在只读预检所选文件和当前设置…"
         Task {
             defer { isImportWorking = false }
             do {
                 let session = try await accessModel
                     .preparePortableContinuityImport(from: sourceURL)
-                importSession = session
-                importPreview = session.preview
+                draft.importSession = session
+                draft.importPreview = session.preview
                 configureImportForms(session)
-                importStatus =
+                draft.importStatus =
                     "只读预检完成；当前设置与所选文件均未改变。请完成选择后确认。"
             } catch {
                 resetImportDraft()
-                importStatus =
+                draft.importStatus =
                     "预检失败：\(error.localizedDescription)；未写入设置。"
             }
         }
@@ -736,7 +693,7 @@ struct BeginnerContinuityExportView: View {
     private func configureImportForms(
         _ session: PortableContinuityImportSession
     ) {
-        relayImportForms = session.manifest.accessProfiles.compactMap {
+        draft.relayImportForms = session.manifest.accessProfiles.compactMap {
             source in
             guard source.kind == .relay,
                 let baseURL = source.baseURL,
@@ -780,7 +737,7 @@ struct BeginnerContinuityExportView: View {
                 credential: ""
             )
         }
-        workspaceImportForms = session.manifest.workspaceLabels.map {
+        draft.workspaceImportForms = session.manifest.workspaceLabels.map {
             source in
             let matchingPaths = historyModel.workspaceLabels.compactMap {
                 path, label in
@@ -796,17 +753,17 @@ struct BeginnerContinuityExportView: View {
                     matchingPaths.count == 1 ? matchingPaths[0] : ""
             )
         }
-        importConfirmed = false
+        draft.importConfirmed = false
     }
 
     private func applyConfirmedImport() {
         guard canApplyImport,
-            let importSession
+            let importSession = draft.importSession
         else {
-            importStatus = "请完成选择、凭据和确认；尚未写入设置。"
+            draft.importStatus = importEligibility.issue ?? "请重新预检；尚未写入设置。"
             return
         }
-        let relayDecisions = relayImportForms
+        let relayDecisions = draft.relayImportForms
             .filter(\.isSelected)
             .map { form in
                 let isNew = form.targetProfileID.isEmpty
@@ -823,7 +780,7 @@ struct BeginnerContinuityExportView: View {
                     credential: form.credential
                 )
             }
-        let workspaceDecisions = workspaceImportForms
+        let workspaceDecisions = draft.workspaceImportForms
             .filter(\.isSelected)
             .map {
                 PortableContinuityWorkspaceDecision(
@@ -838,7 +795,7 @@ struct BeginnerContinuityExportView: View {
             userConfirmed: true
         )
         isImportWorking = true
-        importStatus = "正在建立恢复点并导入所选内容…"
+        draft.importStatus = "正在建立恢复点并导入所选内容…"
         Task {
             defer { isImportWorking = false }
             do {
@@ -847,12 +804,12 @@ struct BeginnerContinuityExportView: View {
                 historyModel.reloadWorkspacePreferences()
                 resetImportDraft()
                 refreshPreview()
-                importStatus =
+                draft.importStatus =
                     "已导入中转 \(result.importedRelayCount) 条、工作区标签 \(result.mappedWorkspaceCount) 个。\(result.continuation.userMessage)"
             } catch {
-                importConfirmed = false
+                draft.importConfirmed = false
                 accessModel.refreshPortableContinuityRecoveryState()
-                importStatus =
+                draft.importStatus =
                     "导入未完成：\(error.localizedDescription)"
             }
         }
@@ -860,8 +817,8 @@ struct BeginnerContinuityExportView: View {
 
     private func recoverPendingImport() {
         isImportWorking = true
-        importConfirmed = false
-        importStatus = "正在恢复未完成的迁移导入…"
+        draft.importConfirmed = false
+        draft.importStatus = "正在恢复未完成的迁移导入…"
         Task {
             defer { isImportWorking = false }
             do {
@@ -870,21 +827,21 @@ struct BeginnerContinuityExportView: View {
                 historyModel.reloadWorkspacePreferences()
                 resetImportDraft()
                 refreshPreview()
-                importStatus =
+                draft.importStatus =
                     "已安全处理 \(count) 条未完成导入记录；可以重新预检。"
             } catch {
-                importStatus =
+                draft.importStatus =
                     "恢复仍未完成：\(error.localizedDescription)"
             }
         }
     }
 
     private func resetImportDraft() {
-        importSession = nil
-        importPreview = nil
-        relayImportForms = []
-        workspaceImportForms = []
-        importConfirmed = false
+        draft.importSession = nil
+        draft.importPreview = nil
+        draft.relayImportForms = []
+        draft.workspaceImportForms = []
+        draft.importConfirmed = false
     }
 
     private func canonicalPortableEndpoint(_ value: String) -> String {

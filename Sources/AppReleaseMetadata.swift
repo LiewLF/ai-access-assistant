@@ -2,7 +2,7 @@ import Foundation
 
 enum AppReleaseMetadata {
     private static let fallbackVersion = "0.12.0"
-    private static let fallbackBuild = "178"
+    private static let fallbackBuild = "186"
 
     static var version: String {
         Bundle.main.object(

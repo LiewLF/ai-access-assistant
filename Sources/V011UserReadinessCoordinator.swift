@@ -9,7 +9,6 @@ struct V011UserReadinessEvidenceSnapshot {
 
 struct V011UserReadinessCoordinator: @unchecked Sendable {
     private let rootURL: URL
-    private let writer: FableAtomicConfigWriter
     private let officialUsageReader:
         any V011OfficialUsageReading
     private let savedRelayVerifier:
@@ -24,7 +23,6 @@ struct V011UserReadinessCoordinator: @unchecked Sendable {
                 "UserReadiness",
                 isDirectory: true
             )
-        writer = dependencies.atomicWriter
         officialUsageReader = dependencies.officialUsageReader
         savedRelayVerifier =
             dependencies.savedRelayReadinessVerifier
@@ -120,9 +118,9 @@ struct V011UserReadinessCoordinator: @unchecked Sendable {
         guard let receipt = receipts[profile.id] else {
             return .unverified
         }
-        guard receipt.profileFingerprint
-                == V011SavedRelayReadinessReceipt
-                    .fingerprint(profile) else {
+        guard let routeIdentity =
+                V011AgentLoopRouteIdentity(profile: profile),
+              receipt.routeIdentity == routeIdentity else {
             return .expired
         }
         if receipt.agentLoop.outcome == .failed {
@@ -155,10 +153,9 @@ struct V011UserReadinessCoordinator: @unchecked Sendable {
             if let error = errors[profile.id] {
                 return "真实任务未通过：\(error)"
             }
-            if let stage = receipts[
-                profile.id
-            ]?.agentLoop.failureStage {
-                return "真实任务未通过：\(V013FailurePresentation.agentLoop(stage).conclusion)"
+            if let receipt = receipts[profile.id]?.agentLoop,
+               let stage = receipt.failureStage {
+                return "真实任务未通过：\(V013FailurePresentation.agentLoop(stage, reason: receipt.failureReason).conclusion)"
             }
             return "真实任务未通过"
         case .unverified:
@@ -181,8 +178,7 @@ struct V011UserReadinessCoordinator: @unchecked Sendable {
             fileURL: rootURL.appendingPathComponent(
                 "official-usage.json",
                 isDirectory: false
-            ),
-            writer: writer
+            )
         )
     }
 
@@ -192,8 +188,7 @@ struct V011UserReadinessCoordinator: @unchecked Sendable {
             fileURL: rootURL.appendingPathComponent(
                 "saved-relay-readiness.json",
                 isDirectory: false
-            ),
-            writer: writer
+            )
         )
     }
 }

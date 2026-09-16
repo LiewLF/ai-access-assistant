@@ -30,6 +30,7 @@ final class V011AccessRefreshController {
     private var refreshTask: Task<Void, Never>?
     private var debounceTask: Task<Void, Never>?
     private var gate = V011RefreshGate()
+    private var completionAfterRefresh: (() -> Void)?
 
     private lazy var service = V011AccessRefreshService(
         dependencies: dependencies,
@@ -49,13 +50,15 @@ final class V011AccessRefreshController {
 
     func request(
         reason: V011RefreshReason,
-        debounceNanoseconds: UInt64
+        debounceNanoseconds: UInt64,
+        completion: (() -> Void)? = nil
     ) {
         guard reason == .manual
                 || dependencies.allowsUnpromptedRefresh else {
             delegate?.accessRefreshPreparePresentation()
             return
         }
+        if let completion { completionAfterRefresh = completion }
         guard gate.request(reason) == .schedule else {
             return
         }
@@ -145,6 +148,10 @@ final class V011AccessRefreshController {
         )
         if needsTrailingRefresh {
             beginIfPossible()
+        } else {
+            let completion = completionAfterRefresh
+            completionAfterRefresh = nil
+            completion?()
         }
     }
 }

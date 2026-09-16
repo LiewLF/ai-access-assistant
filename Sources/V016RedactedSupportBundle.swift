@@ -7,6 +7,7 @@ enum V016SupportActionKind:
     case none
     case installCodex = "install_codex"
     case previewRecovery = "preview_recovery"
+    case keepCurrentConfiguration = "keep_current_configuration"
     case openDiagnostics = "open_diagnostics"
     case resolveFailure = "resolve_failure"
     case performDoctorAction = "perform_doctor_action"
@@ -38,6 +39,8 @@ struct V016SupportAction:
             return Self(kind: .installCodex)
         case .previewRecovery:
             return Self(kind: .previewRecovery)
+        case .keepCurrentConfiguration:
+            return Self(kind: .keepCurrentConfiguration)
         case .openDiagnostics:
             return Self(kind: .openDiagnostics)
         case let .resolveFailure(failure):

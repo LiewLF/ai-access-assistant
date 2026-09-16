@@ -1,128 +1,6 @@
 import Combine
 import Foundation
 
-struct V012RateLimitObservation: Equatable, Sendable {
-    let usedPercent: Double
-    let windowMinutes: Int
-    let resetsAt: Date
-    let observedAt: Date
-
-    var isWeekly: Bool {
-        windowMinutes >= 6 * 24 * 60
-            && windowMinutes <= 8 * 24 * 60
-    }
-}
-
-struct V012UpstreamTokenUsage: Equatable, Sendable {
-    let observedAt: Date
-    let inputTokens: Int64
-    let cachedInputTokens: Int64
-    let cacheWriteInputTokens: Int64?
-    let outputTokens: Int64
-    let reasoningOutputTokens: Int64
-    let activeContextTokens: Int64?
-    let rateLimit: V012RateLimitObservation?
-    let creditBalance: String?
-
-    var uncachedInputTokens: Int64? {
-        guard let cacheWriteInputTokens else { return nil }
-        return max(
-            0,
-            inputTokens
-                - cachedInputTokens
-                - cacheWriteInputTokens
-        )
-    }
-
-    var isStructurallyValid: Bool {
-        [
-            inputTokens,
-            cachedInputTokens,
-            outputTokens,
-            reasoningOutputTokens,
-        ].allSatisfy { $0 >= 0 }
-            && cacheWriteInputTokens.map { value in
-                value >= 0
-                    && cachedInputTokens + value <= inputTokens
-            } != false
-            && activeContextTokens.map { $0 >= 0 } != false
-            && reasoningOutputTokens <= outputTokens
-            && creditBalance.map {
-                V012ModelTokenRate.safeText(
-                    $0,
-                    maximumBytes: 80
-                )
-            } != false
-    }
-}
-
-struct V012CompletedTurnUsage: Identifiable, Equatable, Sendable {
-    let id: String
-    let startedAt: Date
-    let completedAt: Date
-    let durationMilliseconds: Int64?
-    let timeToFirstTokenMilliseconds: Int64?
-    let model: String
-    let providerID: String
-    let serviceTier: String?
-    let calls: [V012UpstreamTokenUsage]
-
-    var inputTokens: Int64 {
-        calls.reduce(0) { $0 + $1.inputTokens }
-    }
-
-    var cachedInputTokens: Int64 {
-        calls.reduce(0) { $0 + $1.cachedInputTokens }
-    }
-
-    var cacheWriteInputTokens: Int64? {
-        guard calls.allSatisfy({ $0.cacheWriteInputTokens != nil }) else {
-            return nil
-        }
-        return calls.reduce(0) {
-            $0 + ($1.cacheWriteInputTokens ?? 0)
-        }
-    }
-
-    var uncachedInputTokens: Int64? {
-        guard calls.allSatisfy({ $0.uncachedInputTokens != nil }) else {
-            return nil
-        }
-        return calls.reduce(0) {
-            $0 + ($1.uncachedInputTokens ?? 0)
-        }
-    }
-
-    var outputTokens: Int64 {
-        calls.reduce(0) { $0 + $1.outputTokens }
-    }
-
-    var reasoningOutputTokens: Int64 {
-        calls.reduce(0) { $0 + $1.reasoningOutputTokens }
-    }
-
-    var billableTokens: Int64 {
-        inputTokens + outputTokens
-    }
-
-    var activeContextTokens: Int64? {
-        calls.last?.activeContextTokens
-    }
-}
-
-struct V012UsageReadResult: Equatable, Sendable {
-    let turns: [V012CompletedTurnUsage]
-    let sourceChangedDuringRead: Bool
-}
-
-enum V012RolloutUsageError: LocalizedError {
-    case malformedUsage
-
-    var errorDescription: String? {
-        "请求用量记录格式无法安全识别"
-    }
-}
-
 struct V012RolloutUsageReader: Sendable {
     private struct Settings {
         var model = "unknown"
@@ -135,6 +13,7 @@ struct V012RolloutUsageReader: Sendable {
         let startedAt: Date
         var settings: Settings
         var calls: [V012UpstreamTokenUsage] = []
+        var cumulativeUsage: [String: Int64]?
     }
 
     let maximumTurns: Int
@@ -142,7 +21,7 @@ struct V012RolloutUsageReader: Sendable {
     let lineReader: RolloutSessionReader
 
     init(
-        maximumTurns: Int = 50,
+        maximumTurns: Int = 2_000,
         maximumCallsPerTurn: Int = 512,
         lineReader: RolloutSessionReader = RolloutSessionReader()
     ) {
@@ -161,6 +40,7 @@ struct V012RolloutUsageReader: Sendable {
         var contextByTurn: [String: Settings] = [:]
         var active: Builder?
         var turns: [V012CompletedTurnUsage] = []
+        var overflowed = false
         try lineReader.forEachLine(at: url) { data in
             guard let object = try? JSONSerialization.jsonObject(
                 with: data
@@ -176,6 +56,8 @@ struct V012RolloutUsageReader: Sendable {
                 }
                 var value = settings
                 value.model = model
+                value.serviceTier = safeText(payload["service_tier"])
+                    ?? settings.serviceTier
                 contextByTurn[turnID] = value
                 if active?.rawTurnID == turnID {
                     active?.settings = value
@@ -201,7 +83,8 @@ struct V012RolloutUsageReader: Sendable {
                 }
             case "task_started":
                 guard let turnID = safeText(payload["turn_id"]),
-                      let seconds = number(payload["started_at"]),
+                      let seconds = number(payload["started_at"])
+                        ?? parseDate(object["timestamp"])?.timeIntervalSince1970,
                       seconds > 0 else { return }
                 active = Builder(
                     rawTurnID: turnID,
@@ -210,6 +93,13 @@ struct V012RolloutUsageReader: Sendable {
                 )
             case "token_count":
                 guard var value = active else { return }
+                let info = payload["info"] as? [String: Any]
+                let cumulative = (info?["total_token_usage"] as? [String: Any])?
+                    .compactMapValues(integer)
+                if let cumulative, cumulative == value.cumulativeUsage {
+                    // Rate-limit notifications may repeat the last usage snapshot.
+                    return
+                }
                 guard value.calls.count < maximumCallsPerTurn else {
                     throw V012RolloutUsageError.malformedUsage
                 }
@@ -218,13 +108,15 @@ struct V012RolloutUsageReader: Sendable {
                     object: object
                 ) else { return }
                 value.calls.append(call)
+                value.cumulativeUsage = cumulative
                 active = value
             case "task_complete":
                 guard let value = active,
                       let turnID = safeText(payload["turn_id"]),
                       turnID == value.rawTurnID,
                       !value.calls.isEmpty,
-                      let completed = number(payload["completed_at"]),
+                      let completed = number(payload["completed_at"])
+                        ?? parseDate(object["timestamp"])?.timeIntervalSince1970,
                       completed >= value.startedAt
                         .timeIntervalSince1970 else { return }
                 let duration = optionalNonnegativeInteger(
@@ -251,6 +143,7 @@ struct V012RolloutUsageReader: Sendable {
                     )
                 )
                 if turns.count > maximumTurns {
+                    overflowed = true
                     turns.removeFirst(turns.count - maximumTurns)
                 }
                 active = nil
@@ -261,7 +154,8 @@ struct V012RolloutUsageReader: Sendable {
         let after = try identity(url)
         return V012UsageReadResult(
             turns: turns.sorted { $0.completedAt > $1.completedAt },
-            sourceChangedDuringRead: before != after
+            sourceChangedDuringRead: before != after,
+            overflowed: overflowed
         )
     }
 
@@ -312,19 +206,39 @@ struct V012RolloutUsageReader: Sendable {
         _ raw: Any?,
         observedAt: Date
     ) -> V012RateLimitObservation? {
-        guard let object = raw as? [String: Any],
-              let primary = object["primary"] as? [String: Any],
-              let used = number(primary["used_percent"]),
-              let minutes = integer(primary["window_minutes"]),
-              let reset = number(primary["resets_at"]),
+        guard let object = raw as? [String: Any] else { return nil }
+        let primary = parseRateLimitGroup(
+            object["primary"],
+            observedAt: observedAt
+        )
+        let secondary = parseRateLimitGroup(
+            object["secondary"],
+            observedAt: observedAt
+        )
+        return V012RateLimitObservation.weekly(
+            fromPrimary: primary,
+            secondary: secondary
+        )
+    }
+
+    private func parseRateLimitGroup(
+        _ raw: Any?,
+        observedAt: Date
+    ) -> V012RateLimitObservation? {
+        guard let group = raw as? [String: Any],
+              let used = number(group["used_percent"]),
+              let minutes = integer(group["window_minutes"]),
+              let reset = number(group["resets_at"]),
               used >= 0,
               used <= 100,
               minutes > 0,
               reset > 0 else { return nil }
+        let resetsAt = Date(timeIntervalSince1970: reset)
+        guard resetsAt > observedAt else { return nil }
         return V012RateLimitObservation(
             usedPercent: used,
             windowMinutes: Int(minutes),
-            resetsAt: Date(timeIntervalSince1970: reset),
+            resetsAt: resetsAt,
             observedAt: observedAt
         )
     }
@@ -392,8 +306,10 @@ struct V012RolloutUsageReader: Sendable {
 
 @MainActor
 final class V012UsageTruthModel: ObservableObject {
-    @Published private(set) var turns: [V012CompletedTurnUsage] = []
-    @Published private(set) var weeklyUsageStatus: V013WeeklyUsageStatus = .notRead
+    @Published private var evidenceTurns: [V012CompletedTurnUsage] = []
+    var turns: [V012CompletedTurnUsage] { Array(evidenceTurns.prefix(80)) }
+    var weeklyUsageStatus: V013WeeklyUsageStatus { usagePresentation?.strict ?? .notRead }
+    @Published private(set) var usagePresentation: V013UsagePresentation?
     @Published private(set) var pricingSnapshots: [String: V012RelayPricingSnapshot] = [:]
     @Published private(set) var pendingPricingSnapshots: [String: V012RelayPricingSnapshot] = [:]
     @Published private(set) var officialPricingSnapshot:
@@ -410,6 +326,7 @@ final class V012UsageTruthModel: ObservableObject {
     private let pricingStore: V012RelayPricingStore
     private let officialPricingStore: V013OfficialPricingStore
     private let usageLedgerStore: V013UsageLedgerStore
+    private let cpaEvidenceStore: V013CPACollectionEvidenceStore
     private let usageScanner: V012UsageScanCoordinator
     private let pricingFetcher: V012PricingManifestFetcher
     private let officialPricingChecker: V013OfficialPricingChecker
@@ -419,6 +336,10 @@ final class V012UsageTruthModel: ObservableObject {
     private var usageLedger: V013UsageLedgerState = .empty
     private var lastPricingCheckByProfile: [String: Date] = [:]
     private var latestOfficialUsageSnapshot: V011OfficialUsageSnapshot?
+    private var latestHistoryCoverageComplete = false
+    private var latestSourceReadsStable = false
+    private var stagedAgentLoopTurns:
+        [String: V012CompletedTurnUsage] = [:]
 
     init(
         controlRoot: URL? = nil,
@@ -446,6 +367,8 @@ final class V012UsageTruthModel: ObservableObject {
                 .appendingPathComponent("V013", isDirectory: true)
                 .appendingPathComponent("usage-ledger.json")
         )
+        self.cpaEvidenceStore = V013CPACollectionEvidenceStore(root: root
+            .appendingPathComponent("V013/CPA/captures", isDirectory: true))
         self.usageScanner = usageScanner ?? V012UsageScanCoordinator(
             usageReader: { url, providerID in
                 try usageReader.read(
@@ -479,12 +402,23 @@ final class V012UsageTruthModel: ObservableObject {
         }
     }
 
-    func refresh(rows: [V011SessionRow], historyHasMore: Bool,
+    func refresh(
+        rows: [V011SessionRow],
+        historyCoverage: V013UsageHistoryCoverage,
                  officialSnapshot: V011OfficialUsageSnapshot?, profiles: [CodexRelayProfile]) {
         latestOfficialUsageSnapshot = officialSnapshot
+        latestHistoryCoverageComplete = false
+        latestSourceReadsStable = false
         refreshTask?.cancel()
         refreshGeneration &+= 1
         let generation = refreshGeneration
+        if historyCoverage == .loading {
+            usagePresentation = .init(strict: .notRead,
+                local: usagePresentation?.local, apiReference: nil)
+            isRefreshing = true
+            status = "正在读取本周本机历史"
+            return
+        }
         let orderedRows = rows.sorted { lhs, rhs in
             let lhsDate = lhs.updatedAt ?? .distantPast
             let rhsDate = rhs.updatedAt ?? .distantPast
@@ -512,27 +446,12 @@ final class V012UsageTruthModel: ObservableObject {
             (lhs.updatedAt ?? .distantPast)
                 > (rhs.updatedAt ?? .distantPast)
         }
-        let historyCoverageComplete: Bool
-        if !historyHasMore {
-            historyCoverageComplete = true
-        } else if let windowStart,
-                  let oldest = orderedRows.last?.updatedAt {
-            historyCoverageComplete = oldest <= windowStart
-        } else {
-            historyCoverageComplete = false
-        }
         let sources = selected.map {
                 V012UsageScanSource(
                     url: URL(fileURLWithPath: $0.rolloutPath),
                     providerID: $0.currentProvider
                 )
             }
-        guard !sources.isEmpty else {
-            isRefreshing = false
-            lastUsageFilesRead = 0
-            status = "历史列表尚未读取；刷新后显示最近完成请求"
-            return
-        }
         isRefreshing = true
         let scanner = usageScanner
         refreshTask = Task { [weak self] in
@@ -543,38 +462,62 @@ final class V012UsageTruthModel: ObservableObject {
                       generation == self.refreshGeneration else { return }
                 self.isRefreshing = false
                 self.lastUsageFilesRead = result.readSourceCount
-                self.turns = result.turns
-                let ledgerUpdated = self.mergeUsageLedger(
-                    turns: result.turns,
+                var ledgerReadFailure: String?
+                do { self.usageLedger = try self.usageLedgerStore.load() }
+                catch { ledgerReadFailure = "本地账本无法安全读取；原文件已保留，本次未写入。恢复可读账本后可刷新重试" }
+                let combined = Dictionary(
+                    result.turns.map { ($0.id, $0) }
+                        + self.stagedAgentLoopTurns.map { ($0.key, $0.value) }
+                        + self.usageLedger.records.compactMap(\.completedUsage)
+                            .map { ($0.id, $0) },
+                    uniquingKeysWith: V012OfficialUsageCollection.retainingEvidence
+                ).values.sorted { $0.completedAt > $1.completedAt }
+                let allTurns = Array(
+                    combined.prefix(V012UsageScanCoordinator.maximumTurns)
+                ).map { V012OfficialUsageCollection.enrich($0, snapshot: officialSnapshot) }
+                self.evidenceTurns = allTurns
+                let effectiveCoverage = result.overflowed
+                    || combined.count
+                        > V012UsageScanCoordinator.maximumTurns
+                    ? V013UsageHistoryCoverage.overflow
+                    : historyCoverage
+                self.latestHistoryCoverageComplete =
+                    effectiveCoverage.isComplete
+                self.latestSourceReadsStable =
+                    result.changedSourceCount == 0
+                let ledgerFailure = ledgerReadFailure ?? self.mergeUsageLedger(
+                    turns: allTurns,
                     officialSnapshot: officialSnapshot,
                     profiles: profiles,
                     historyCoverageComplete:
-                        historyCoverageComplete,
+                        effectiveCoverage.isComplete,
                     sourceReadsStable: result.changedSourceCount == 0
                 )
-                self.weeklyUsageStatus = V013WeeklyUsageEstimator
-                    .evaluate(
-                        ledger: self.usageLedger,
-                        officialSnapshot: officialSnapshot,
-                        planType: officialSnapshot?.planType,
-                        pricing: self.officialPricingSnapshot,
-                        now: self.now()
-                    )
-                let base = result.changedSourceCount == 0
-                    ? "已读取 \(result.turns.count) 个完成请求"
-                    : "已读取 \(result.turns.count) 个完成请求；正在写入的会话只显示完整请求"
-                self.status = ledgerUpdated
-                    ? base
-                    : "\(base)；本地账本本次未更新"
+                let presentation = V013UsagePresentation.observedUsage(
+                    ledger: self.usageLedger,
+                    pricing: self.officialPricingSnapshot,
+                    now: self.now()
+                )
+                self.usagePresentation = presentation
+                let base = effectiveCoverage == .overflow
+                    ? "本周完成请求超过读取上限；当前仅显示已读部分"
+                    : effectiveCoverage == .incomplete
+                    ? "本周历史尚未读全；当前仅显示已读的 \(allTurns.count) 个完成请求"
+                    : effectiveCoverage == .unknown
+                    ? "历史覆盖范围尚未确认；已读取 \(allTurns.count) 个完成请求"
+                    : result.changedSourceCount == 0
+                    ? "已读取 \(allTurns.count) 个完成请求"
+                    : "已读取 \(allTurns.count) 个完成请求；正在写入的会话只显示完整请求"
+                self.status = ledgerFailure.map { "\(base)；\($0)" } ?? base
+
             } catch is CancellationError {
                 return
             } catch {
                 guard let self,
                       generation == self.refreshGeneration else { return }
                 self.isRefreshing = false
-                self.status = (error as? LocalizedError)?
-                    .errorDescription
-                    ?? "最近请求用量读取失败"
+                self.status = (error as? LocalizedError)?.errorDescription ?? "最近请求用量读取失败"
+                self.usagePresentation = .readFailure(previous: self.usagePresentation)
             }
         }
     }
@@ -583,7 +526,29 @@ final class V012UsageTruthModel: ObservableObject {
         refreshGeneration &+= 1
         refreshTask?.cancel()
         refreshTask = nil
+        if isRefreshing {
+            status = "本机用量更新已暂停；已读取的信息保留"
+        }
         isRefreshing = false
+    }
+
+    func historyReadFailed(officialSnapshot: V011OfficialUsageSnapshot?) {
+        cancelRefresh()
+        latestOfficialUsageSnapshot = officialSnapshot
+        latestHistoryCoverageComplete = false
+        latestSourceReadsStable = false
+        usagePresentation = .readFailure(previous: usagePresentation)
+        status = usagePresentation?.local == nil
+            ? "本周历史读取失败；暂无已读取的本机用量，请刷新重试"
+            : "本周历史读取失败；保留上次已读取的本机用量，请刷新重试"
+    }
+
+    func stageAgentLoopUsage(_ turn: V012CompletedTurnUsage) {
+        guard !turn.id.isEmpty,
+              turn.completedAt >= turn.startedAt,
+              !turn.calls.isEmpty,
+              turn.calls.allSatisfy(\.isStructurallyValid) else { return }
+        stagedAgentLoopTurns[turn.id] = turn
     }
 
     func pricingSnapshot(
@@ -598,11 +563,35 @@ final class V012UsageTruthModel: ObservableObject {
         profiles: [CodexRelayProfile],
         historyCoverageComplete: Bool,
         sourceReadsStable: Bool
-    ) -> Bool {
+    ) -> String? {
         var candidate = usageLedger
-        let existing = Set(candidate.records.map(\.id))
         let observedNow = now()
-        for turn in turns where !existing.contains(turn.id) {
+        let currentObservation: V013QuotaLedgerObservation? =
+            officialSnapshot.flatMap { snapshot
+                -> V013QuotaLedgerObservation? in
+            guard snapshot.isFresh(at: observedNow),
+                  let weekly = snapshot.windows.first(where: {
+                      $0.durationMinutes == 10_080
+                  }),
+                  let resetsAt = weekly.resetsAt,
+                  resetsAt > snapshot.observedAt else { return nil }
+            return V013QuotaLedgerObservation.current(
+                snapshot: snapshot,
+                window: weekly,
+                resetsAt: resetsAt,
+                historyCoverageComplete: historyCoverageComplete,
+                sourceReadsStable: sourceReadsStable
+            )
+        }
+        let identityObservations = candidate.quotaObservations
+            + (currentObservation.map { [$0] } ?? [])
+        for turn in turns {
+            let existingIndex = candidate.records.firstIndex {
+                $0.id == turn.id
+            }
+            let isOfficial = turn.providerID.caseInsensitiveCompare(
+                "openai"
+            ) == .orderedSame
             let profile = profiles.first {
                 $0.v011ProviderID == turn.providerID
                     || $0.id == turn.providerID
@@ -612,29 +601,34 @@ final class V012UsageTruthModel: ObservableObject {
             }
             let cost = V012UsageCostCalculator.calculate(
                 calls: turn.calls,
-                model: turn.model,
+                model: turn.pricingModel,
                 providerID: turn.providerID,
                 planType: officialSnapshot?.planType,
-                serviceTier: turn.serviceTier,
+                serviceTier: turn.pricingServiceTier,
                 relayPricing: relayPricing,
-                officialPricing: officialPricingSnapshot
+                officialPricing: officialPricingSnapshot,
+                requestBoundariesKnown: turn.containsOnlyTurnTotals != true
             )
-            let isOfficial = turn.providerID.caseInsensitiveCompare(
-                "openai"
-            ) == .orderedSame
             let accountScope = isOfficial
                 ? officialSnapshot?.accountScopeSHA256 : nil
             let identityBound = isOfficial
-                && officialSnapshot.map { snapshot in
-                    snapshot.isFresh(at: observedNow)
-                        && snapshot.observedAt >= turn.completedAt
-                        && snapshot.observedAt.timeIntervalSince(
-                            turn.completedAt
-                        ) <= V011OfficialUsageSnapshot
-                            .freshnessLifetime
+                && turn.officialRequestPricing.map { $0.accountScopeSHA256 == accountScope } != false
+                && accountScope.map { scope in
+                    V013UsageIdentityEvidence.isTrustedCompletion(
+                        completedAt: turn.completedAt,
+                        accountScope: scope,
+                        observations: identityObservations
+                    )
                 } == true
-            candidate.records.append(
-                V013UsageLedgerRecord(
+            let canBindExisting = existingIndex.map { index in
+                !candidate.records[index].identityBoundAtCompletion
+                    && identityBound
+            } ?? false
+            if let existingIndex, !canBindExisting {
+                V012OfficialUsageCollection.hydrate(&candidate.records[existingIndex], from: turn)
+                continue
+            }
+            var record = V013UsageLedgerRecord(
                     version: V013UsageLedgerRecord.schemaVersion,
                     id: turn.id,
                     completedAt: turn.completedAt,
@@ -642,8 +636,9 @@ final class V012UsageTruthModel: ObservableObject {
                     providerID: turn.providerID,
                     model: turn.model,
                     serviceTier: turn.serviceTier,
-                    accountScopeSHA256: accountScope,
+                    accountScopeSHA256: identityBound ? accountScope : nil,
                     identityBoundAtCompletion: identityBound,
+                    legacyPostCompletionAccountScopeSHA256: nil,
                     inputTokens: turn.inputTokens,
                     cachedInputTokens: turn.cachedInputTokens,
                     cacheWriteInputTokens:
@@ -651,59 +646,46 @@ final class V012UsageTruthModel: ObservableObject {
                     outputTokens: turn.outputTokens,
                     reasoningOutputTokens:
                         turn.reasoningOutputTokens,
-                    billableTokens: turn.billableTokens,
+                    modelProcessedTokens: turn.modelProcessedTokens,
                     originalCredits: cost.credits,
                     originalAPIEquivalentUSD:
                         cost.apiEquivalentUSD,
                     originalRelayAmount: cost.relayAmount,
                     originalRelayCurrency: cost.relayCurrency,
                     officialPricing: isOfficial
-                        && cost.pricingRevision != nil
+                        && (cost.apiEquivalentUSD != nil
+                            || cost.credits != nil)
                         ? officialPricingSnapshot : nil,
                     relayPricing: isOfficial ? nil : relayPricing,
                     pricingEvidence: cost.pricingEvidence
                 )
-            )
+            record.completedUsage = turn
+            if let existingIndex {
+                candidate.records[existingIndex] = record
+            } else {
+                candidate.records.append(record)
+            }
         }
         candidate.records = Array(
             candidate.records.sorted {
                 $0.completedAt > $1.completedAt
             }.prefix(2_000)
         )
-        if let snapshot = officialSnapshot,
-           snapshot.isFresh(at: observedNow),
-           let weekly = snapshot.windows.first(where: {
-               $0.durationMinutes == 10_080
-           }),
-           let resetsAt = weekly.resetsAt,
-           resetsAt > snapshot.observedAt {
-            let observation = V013QuotaLedgerObservation.current(
-                snapshot: snapshot,
-                window: weekly,
-                resetsAt: resetsAt,
-                historyCoverageComplete: historyCoverageComplete,
-                sourceReadsStable: sourceReadsStable
-            )
-            if let index = candidate.quotaObservations.firstIndex(
-                where: { $0.id == observation.id }
-            ) {
-                candidate.quotaObservations[index] = observation
-            } else {
-                candidate.quotaObservations.append(observation)
-            }
+        if let observation = currentObservation {
+            candidate.record(observation)
         }
         candidate.quotaObservations = Array(
             candidate.quotaObservations.sorted {
                 $0.observedAt < $1.observedAt
             }.suffix(400)
         )
-        guard candidate != usageLedger else { return true }
+        guard candidate != usageLedger else { return nil }
         do {
             try usageLedgerStore.commit(candidate)
             usageLedger = candidate
-            return true
+            return nil
         } catch {
-            return false
+            return "本地账本本次未更新"
         }
     }
 
@@ -719,6 +701,7 @@ final class V012UsageTruthModel: ObservableObject {
         automaticUpdates: Bool
     ) -> Bool {
         do {
+            var candidate = try pricingStore.loadForUpdate()
             let rate = V012ModelTokenRate(
                 model: model,
                 inputPerMillion: inputPerMillion,
@@ -727,7 +710,7 @@ final class V012UsageTruthModel: ObservableObject {
                 outputPerMillion: outputPerMillion
             )
             let snapshot: V012RelayPricingSnapshot
-            if let existing = pricingSnapshots[profile.id] {
+            if let existing = candidate[profile.id] {
                 snapshot = try existing.replacing(
                     rate: rate,
                     currency: currency,
@@ -745,7 +728,6 @@ final class V012UsageTruthModel: ObservableObject {
                     now: now()
                 )
             }
-            var candidate = pricingSnapshots
             candidate[profile.id] = snapshot
             try pricingStore.commit(candidate)
             pricingSnapshots = candidate
@@ -778,15 +760,20 @@ final class V012UsageTruthModel: ObservableObject {
                 sourceURL: sourceURL,
                 automaticUpdates: current.automaticUpdates
             )
-            lastPricingCheckByProfile[profileID] = now()
-            if fetched.revision == current.revision {
+            lastPricingCheckByProfile[profileID] = fetched.checkedAt
+            let pricingUnchanged = fetched.hasSamePricing(as: current)
+            if pricingUnchanged {
+                var candidate = try pricingStore.loadForUpdate()
+                candidate[profileID] = fetched
+                try pricingStore.commit(candidate)
+                pricingSnapshots = candidate
                 pendingPricingSnapshots.removeValue(forKey: profileID)
             } else {
                 pendingPricingSnapshots[profileID] = fetched
             }
             pricingMessageByProfile[profileID] =
-                fetched.revision == current.revision
-                    ? "检查完成：定价未变化；生效快照保持不变"
+                pricingUnchanged
+                    ? "检查完成：定价未变化；已记录检查时间 \(fetched.checkedAt.formatted(date: .abbreviated, time: .shortened))"
                     : pricingDiff(current: current, pending: fetched)
             return true
         } catch {
@@ -819,13 +806,13 @@ final class V012UsageTruthModel: ObservableObject {
             return false
         }
         do {
-            var candidate = pricingSnapshots
+            var candidate = try pricingStore.loadForUpdate()
             candidate[profileID] = pending
             try pricingStore.commit(candidate)
             pricingSnapshots = candidate
             pendingPricingSnapshots.removeValue(forKey: profileID)
             pricingMessageByProfile[profileID] =
-                "已由用户应用价格快照 \(pending.revision.prefix(8))；历史请求仍保留原快照"
+                "已由用户应用价格快照；生效 \(pending.effectiveAt.formatted(date: .abbreviated, time: .shortened))，检查 \(pending.checkedAt.formatted(date: .abbreviated, time: .shortened))；历史请求仍保留原快照"
             return true
         } catch {
             pricingMessageByProfile[profileID] =
@@ -862,7 +849,9 @@ final class V012UsageTruthModel: ObservableObject {
             let candidate = try await officialPricingChecker.check(
                 current: officialPricingSnapshot
             )
-            if candidate.revision == officialPricingSnapshot.revision {
+            if candidate.hasSamePricing(as: officialPricingSnapshot) {
+                try officialPricingStore.commit(candidate)
+                officialPricingSnapshot = candidate
                 pendingOfficialPricingSnapshot = nil
                 officialPricingMessage =
                     "检查完成：API 模型页与 Speed 未变化 · \(candidate.effectiveAPICheckedAt.formatted(date: .abbreviated, time: .shortened))；credits rate card 核验时间未更新"
@@ -890,15 +879,12 @@ final class V012UsageTruthModel: ObservableObject {
             try officialPricingStore.commit(pending)
             officialPricingSnapshot = pending
             pendingOfficialPricingSnapshot = nil
-            weeklyUsageStatus = V013WeeklyUsageEstimator.evaluate(
-                ledger: usageLedger,
-                officialSnapshot: latestOfficialUsageSnapshot,
-                planType: latestOfficialUsageSnapshot?.planType,
-                pricing: pending,
-                now: now()
+            let presentation = V013UsagePresentation.observedUsage(
+                ledger: usageLedger, pricing: pending, now: now()
             )
+            usagePresentation = presentation
             officialPricingMessage =
-                "已由用户应用官方 API 价格快照 \(pending.revision.prefix(8))；历史请求原快照不变"
+                "已由用户应用官方 API 价格快照；生效 \(pending.effectiveAt.formatted(date: .abbreviated, time: .shortened))，检查 \(pending.checkedAt.formatted(date: .abbreviated, time: .shortened))；历史请求原快照不变"
             return true
         } catch {
             officialPricingMessage =
@@ -934,14 +920,15 @@ final class V012UsageTruthModel: ObservableObject {
         }
         return V012UsageCostCalculator.calculate(
             calls: turn.calls,
-            model: turn.model,
+            model: turn.pricingModel,
             providerID: turn.providerID,
             planType: planType,
-            serviceTier: turn.serviceTier,
+            serviceTier: turn.pricingServiceTier,
             relayPricing: profile.flatMap {
                 pricingSnapshots[$0.id]
             },
-            officialPricing: officialPricingSnapshot
+            officialPricing: officialPricingSnapshot,
+            requestBoundariesKnown: turn.containsOnlyTurnTotals != true
         )
     }
 
@@ -957,19 +944,36 @@ final class V012UsageTruthModel: ObservableObject {
             $0.v011ProviderID == turn.providerID
                 || $0.id == turn.providerID
         }
+        let currentRelayPricing = profile.flatMap {
+            pricingSnapshots[$0.id]
+        }
         let current = V012UsageCostCalculator.calculate(
             calls: turn.calls,
-            model: turn.model,
+            model: turn.pricingModel,
             providerID: turn.providerID,
             planType: planType,
-            serviceTier: turn.serviceTier,
-            relayPricing: profile.flatMap {
-                pricingSnapshots[$0.id]
-            },
-            officialPricing: officialPricingSnapshot
+            serviceTier: turn.pricingServiceTier,
+            relayPricing: currentRelayPricing,
+            officialPricing: officialPricingSnapshot,
+            requestBoundariesKnown: turn.containsOnlyTurnTotals != true
         )
-        guard current.pricingRevision != recorded
-            .originalCostResult().pricingRevision else { return nil }
+        let pricingUnchanged: Bool
+        if turn.providerID.caseInsensitiveCompare("openai")
+            == .orderedSame {
+            pricingUnchanged = recorded.officialPricing?.hasSamePricing(
+                as: officialPricingSnapshot
+            ) == true
+        } else {
+            switch (recorded.relayPricing, currentRelayPricing) {
+            case (nil, nil):
+                pricingUnchanged = true
+            case let (recorded?, current?):
+                pricingUnchanged = recorded.hasSamePricing(as: current)
+            default:
+                pricingUnchanged = false
+            }
+        }
+        guard !pricingUnchanged else { return nil }
         return current
     }
 

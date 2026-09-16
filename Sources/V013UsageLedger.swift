@@ -1,7 +1,7 @@
 import Foundation
 
 struct V013UsageLedgerRecord: Codable, Equatable, Identifiable {
-    static let schemaVersion = 1
+    static let schemaVersion = 5
 
     let version: Int
     let id: String
@@ -12,12 +12,15 @@ struct V013UsageLedgerRecord: Codable, Equatable, Identifiable {
     let serviceTier: String?
     let accountScopeSHA256: String?
     let identityBoundAtCompletion: Bool
+    /// Legacy records could only prove that an account snapshot followed a
+    /// completion. Preserve that fact for explanation, never for arithmetic.
+    let legacyPostCompletionAccountScopeSHA256: String?
     let inputTokens: Int64
     let cachedInputTokens: Int64
     let cacheWriteInputTokens: Int64?
     let outputTokens: Int64
     let reasoningOutputTokens: Int64
-    let billableTokens: Int64
+    let modelProcessedTokens: Int64
     let originalCredits: Double?
     let originalAPIEquivalentUSD: Double?
     let originalRelayAmount: Double?
@@ -25,6 +28,8 @@ struct V013UsageLedgerRecord: Codable, Equatable, Identifiable {
     let officialPricing: V013OfficialPricingSnapshot?
     let relayPricing: V012RelayPricingSnapshot?
     let pricingEvidence: String
+    /// Additive schema-5 field; older records remain readable without invented detail.
+    var completedUsage: V012CompletedTurnUsage? = nil
 
     var isStructurallyValid: Bool {
         version == Self.schemaVersion
@@ -38,20 +43,25 @@ struct V013UsageLedgerRecord: Codable, Equatable, Identifiable {
                 V012ModelTokenRate.safeText($0, maximumBytes: 80)
             } != false
             && accountScopeSHA256.map(Self.isSHA256) != false
+            && legacyPostCompletionAccountScopeSHA256.map(Self.isSHA256) != false
             && (!identityBoundAtCompletion || accountScopeSHA256 != nil)
+            && !(identityBoundAtCompletion
+                && legacyPostCompletionAccountScopeSHA256 != nil)
+            && !(accountScopeSHA256 != nil
+                && legacyPostCompletionAccountScopeSHA256 != nil)
             && [
                 inputTokens,
                 cachedInputTokens,
                 outputTokens,
                 reasoningOutputTokens,
-                billableTokens,
+                modelProcessedTokens,
             ].allSatisfy { $0 >= 0 }
             && cacheWriteInputTokens.map { value in
                 value >= 0
                     && cachedInputTokens + value <= inputTokens
             } != false
             && reasoningOutputTokens <= outputTokens
-            && billableTokens == inputTokens + outputTokens
+            && modelProcessedTokens == inputTokens + outputTokens
             && [
                 originalCredits,
                 originalAPIEquivalentUSD,
@@ -66,6 +76,17 @@ struct V013UsageLedgerRecord: Codable, Equatable, Identifiable {
                 pricingEvidence,
                 maximumBytes: 512
             )
+            && completedUsage.map { usage in
+                usage.id == id && usage.model == model && usage.providerID == providerID
+                    && abs(usage.completedAt.timeIntervalSince(completedAt)) <= 1
+                    && !usage.calls.isEmpty && usage.calls.count <= 512
+                    && usage.calls.allSatisfy(\.isStructurallyValid)
+                    && usage.inputTokens == inputTokens && usage.outputTokens == outputTokens
+                    && usage.officialRequestPricing.map { evidence in
+                        evidence.matches(usage) && (!identityBoundAtCompletion
+                            || evidence.accountScopeSHA256 == accountScopeSHA256)
+                    } != false
+            } != false
     }
 
     func originalCostResult() -> V012CostResult {
@@ -76,7 +97,6 @@ struct V013UsageLedgerRecord: Codable, Equatable, Identifiable {
             apiEquivalentUSD: originalAPIEquivalentUSD,
             relayAmount: originalRelayAmount,
             relayCurrency: originalRelayCurrency,
-            pricingRevision: official?.revision ?? relay?.revision,
             pricingEvidence: pricingEvidence,
             pricingSourceURL: official?.subscriptionSourceURL
                 ?? relay?.sourceURL,
@@ -86,16 +106,21 @@ struct V013UsageLedgerRecord: Codable, Equatable, Identifiable {
 
     func repriced(
         officialPricing: V013OfficialPricingSnapshot,
-        planType: String?
+        planType: String?,
+        apiPricingPolicy: V013APIPricingPolicy = .recordedTier
     ) -> V012CostResult {
         V012UsageCostCalculator.calculate(
-            calls: [asTokenUsage],
-            model: model,
+            calls: completedUsage?.calls ?? [asTokenUsage],
+            model: completedUsage?.pricingModel ?? model,
             providerID: providerID,
             planType: planType,
-            serviceTier: serviceTier,
+            serviceTier: completedUsage?.pricingServiceTier ?? serviceTier,
             relayPricing: relayPricing,
-            officialPricing: officialPricing
+            officialPricing: officialPricing,
+            requestBoundariesKnown: completedUsage.map {
+                $0.containsOnlyTurnTotals != true
+            } ?? false,
+            apiPricingPolicy: apiPricingPolicy
         )
     }
 
@@ -179,9 +204,12 @@ struct V013QuotaLedgerObservation: Codable, Equatable, Identifiable {
         resetsAt: Date,
         historyCoverageComplete: Bool,
         sourceReadsStable: Bool
-    ) -> Self {
-        Self(
-            accountScopeSHA256: snapshot.accountScopeSHA256,
+    ) -> Self? {
+        guard let scope = snapshot.accountScopeSHA256 else {
+            return nil
+        }
+        return Self(
+            accountScopeSHA256: scope,
             usedPercent: window.usedPercent,
             windowMinutes: 10_080,
             resetsAt: resetsAt,
@@ -196,7 +224,7 @@ struct V013QuotaLedgerObservation: Codable, Equatable, Identifiable {
 }
 
 struct V013UsageLedgerState: Codable, Equatable {
-    static let schemaVersion = 1
+    static let schemaVersion = 5
 
     var schemaVersion: Int
     var records: [V013UsageLedgerRecord]
@@ -207,6 +235,18 @@ struct V013UsageLedgerState: Codable, Equatable {
         records: [],
         quotaObservations: []
     )
+
+    mutating func record(_ observation: V013QuotaLedgerObservation) {
+        guard let index = quotaObservations.firstIndex(where: { $0.id == observation.id }) else {
+            quotaObservations.append(observation)
+            return
+        }
+        // Revisiting a cached snapshot must not erase an earlier complete read.
+        let existing = quotaObservations[index]
+        if existing.historyCoverageComplete && existing.sourceReadsStable,
+           !(observation.historyCoverageComplete && observation.sourceReadsStable) { return }
+        quotaObservations[index] = observation
+    }
 
     var isStructurallyValid: Bool {
         schemaVersion == Self.schemaVersion
@@ -220,21 +260,93 @@ struct V013UsageLedgerState: Codable, Equatable {
     }
 }
 
+private struct V013UsageLedgerEnvelope: Decodable {
+    let schemaVersion: Int
+}
+
+private struct V013LegacyUsageLedgerState: Decodable {
+    let schemaVersion: Int
+    let records: [V013LegacyUsageLedgerRecord]
+    let quotaObservations: [V013QuotaLedgerObservation]?
+}
+
+private struct V013LegacyUsageLedgerRecord: Decodable {
+    let id: String
+    let completedAt: Date
+    let recordedAt: Date
+    let providerID: String
+    let model: String
+    let serviceTier: String?
+    let accountScopeSHA256: String?
+    let identityBoundAtCompletion: Bool?
+    let inputTokens: Int64
+    let cachedInputTokens: Int64
+    let cacheWriteInputTokens: Int64?
+    let outputTokens: Int64
+    let reasoningOutputTokens: Int64
+    let modelProcessedTokens: Int64?
+    let billableTokens: Int64?
+    let originalCredits: Double?
+    let originalAPIEquivalentUSD: Double?
+    let originalRelayAmount: Double?
+    let originalRelayCurrency: String?
+    let pricingEvidence: String
+
+    func migrated(
+        identityBound: Bool,
+        legacyPostCompletionScope: String?
+    ) -> V013UsageLedgerRecord {
+        let migratedID = id.count == 64
+            && id.allSatisfy({
+                $0.isHexDigit && !$0.isUppercase
+            })
+            ? id
+            : V011AgentLoopReceipt.sha256(Data(id.utf8))
+        return V013UsageLedgerRecord(
+            version: V013UsageLedgerRecord.schemaVersion,
+            id: migratedID,
+            completedAt: completedAt,
+            recordedAt: recordedAt,
+            providerID: providerID,
+            model: model,
+            serviceTier: serviceTier,
+            accountScopeSHA256: identityBound ? accountScopeSHA256 : nil,
+            identityBoundAtCompletion: identityBound,
+            legacyPostCompletionAccountScopeSHA256:
+                legacyPostCompletionScope,
+            inputTokens: inputTokens,
+            cachedInputTokens: cachedInputTokens,
+            cacheWriteInputTokens: cacheWriteInputTokens,
+            outputTokens: outputTokens,
+            reasoningOutputTokens: reasoningOutputTokens,
+            modelProcessedTokens:
+                modelProcessedTokens ?? billableTokens
+                    ?? (inputTokens + outputTokens),
+            originalCredits: originalCredits,
+            originalAPIEquivalentUSD: originalAPIEquivalentUSD,
+            originalRelayAmount: originalRelayAmount,
+            originalRelayCurrency: originalRelayCurrency,
+            officialPricing: nil,
+            relayPricing: nil,
+            pricingEvidence: pricingEvidence
+        )
+    }
+}
+
 struct V013UsageLedgerStore {
-    static let maximumBytes = 2 * 1024 * 1024
+    static let maximumBytes = 16 * 1024 * 1024
 
     let fileURL: URL
     private let fileManager: FileManager
-    private let writer: FableAtomicConfigWriter
+    private let writer: V011ReceiptFileWriter
 
     init(
         fileURL: URL,
-        fileManager: FileManager = .default,
-        writer: FableAtomicConfigWriter = FableAtomicConfigWriter()
+        fileManager: FileManager = .default
     ) {
         self.fileURL = fileURL.standardizedFileURL
         self.fileManager = fileManager
-        self.writer = writer
+        writer = V011ReceiptFileWriter(fileManager: fileManager)
     }
 
     func load() throws -> V013UsageLedgerState {
@@ -254,10 +366,56 @@ struct V013UsageLedgerStore {
         }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let value = try decoder.decode(
-            V013UsageLedgerState.self,
-            from: Data(contentsOf: fileURL)
+        let data = try Data(contentsOf: fileURL)
+        let envelope = try decoder.decode(
+            V013UsageLedgerEnvelope.self,
+            from: data
         )
+        let value: V013UsageLedgerState
+        if envelope.schemaVersion == V013UsageLedgerState.schemaVersion {
+            value = try decoder.decode(
+                V013UsageLedgerState.self,
+                from: data
+            )
+        } else if [1, 2, 3, 4].contains(envelope.schemaVersion) {
+            let legacy = try decoder.decode(
+                V013LegacyUsageLedgerState.self,
+                from: data
+            )
+            let observations = legacy.quotaObservations ?? []
+            let migratedRecords = legacy.records.map { record in
+                let hadPostCompletionObservation =
+                    record.identityBoundAtCompletion == true
+                    && record.accountScopeSHA256 != nil
+                let identityBound = hadPostCompletionObservation
+                    && record.accountScopeSHA256.map { scope in
+                        V013UsageIdentityEvidence.isTrustedCompletion(
+                            completedAt: record.completedAt,
+                            accountScope: scope,
+                            observations: observations
+                        )
+                    } == true
+                return record.migrated(
+                    identityBound: identityBound,
+                    legacyPostCompletionScope:
+                        hadPostCompletionObservation && !identityBound
+                        ? record.accountScopeSHA256 : nil
+                )
+            }
+            let deduplicatedRecords = Dictionary(
+                migratedRecords.map { ($0.id, $0) },
+                uniquingKeysWith: { lhs, rhs in
+                    lhs.recordedAt >= rhs.recordedAt ? lhs : rhs
+                }
+            ).values.sorted { $0.completedAt > $1.completedAt }
+            value = V013UsageLedgerState(
+                schemaVersion: V013UsageLedgerState.schemaVersion,
+                records: deduplicatedRecords,
+                quotaObservations: observations
+            )
+        } else {
+            throw V012PricingError.invalidValue
+        }
         guard value.isStructurallyValid else {
             throw V012PricingError.invalidValue
         }
@@ -280,12 +438,43 @@ struct V013UsageLedgerStore {
         guard data.count <= Self.maximumBytes else {
             throw V012PricingError.responseTooLarge
         }
-        try writer.write(
-            data,
-            to: fileURL,
-            expectedCurrentHash:
-                SessionSyncFileSafety.hashIfPresent(fileURL)
-        )
+        try writer.write(data, to: fileURL)
+    }
+}
+
+enum V013UsageIdentityEvidence {
+    static func isTrustedCompletion(
+        completedAt: Date,
+        accountScope: String,
+        observations: [V013QuotaLedgerObservation]
+    ) -> Bool {
+        let matching = observations.filter {
+            $0.accountScopeSHA256 == accountScope
+                && $0.windowMinutes == 10_080
+                && $0.historyCoverageComplete
+                && $0.sourceReadsStable
+                && completedAt >= $0.resetsAt.addingTimeInterval(-10_080 * 60)
+                && completedAt <= $0.resetsAt
+        }.sorted { $0.observedAt < $1.observedAt }
+        for following in matching where
+            following.observedAt >= completedAt
+                && following.observedAt.timeIntervalSince(completedAt)
+                    <= V011OfficialUsageSnapshot.freshnessLifetime
+        {
+            guard let preceding = matching.last(where: {
+                abs($0.resetsAt.timeIntervalSince(following.resetsAt)) <= 60
+                    && $0.observedAt <= completedAt
+                    && completedAt.timeIntervalSince($0.observedAt)
+                        <= V011OfficialUsageSnapshot.freshnessLifetime
+            }) else { continue }
+            let sawOtherAccount = observations.contains {
+                $0.accountScopeSHA256 != accountScope
+                    && $0.observedAt >= preceding.observedAt
+                    && $0.observedAt <= following.observedAt
+            }
+            if !sawOtherAccount { return true }
+        }
+        return false
     }
 }
 
@@ -299,21 +488,23 @@ struct V013WeeklyUsageEstimate: Equatable {
     let observedWindowTokens: Int64
     let observedWindowCredits: Double?
     let observedWindowAPIEquivalentUSD: Double?
-    let fullWeekTokens: Double
-    let fullWeekCredits: Double?
-    let fullWeekAPIEquivalentUSD: Double?
-    let lowerWeekTokens: Double?
-    let upperWeekTokens: Double?
+    let pointWeekTokens: Double
+    let lowerWeekTokens: Double
+    let upperWeekTokens: Double
+    let pointWeekCredits: Double?
+    let lowerWeekCredits: Double?
+    let upperWeekCredits: Double?
+    let pointWeekAPIEquivalentUSD: Double?
     let lowerWeekAPIEquivalentUSD: Double?
     let upperWeekAPIEquivalentUSD: Double?
-    let resolutionLowerWeekTokens: Double
-    let resolutionUpperWeekTokens: Double?
     let observationCount: Int
     let percentageTransitionCount: Int
     let usableIntervalSampleCount: Int
     let confidence: Confidence
+    let apiIntervalSampleCount: Int
+    let creditsIntervalSampleCount: Int
     let refreshedAt: Date
-    let pricingRevision: String
+    let pricingSnapshotID: String
 }
 
 struct V013WeeklyUsageStatus: Equatable {
@@ -342,17 +533,30 @@ enum V013WeeklyUsageEstimator {
         officialSnapshot: V011OfficialUsageSnapshot?,
         planType: String?,
         pricing: V013OfficialPricingSnapshot = .current,
-        now: Date
+        now: Date,
+        turns: [V012CompletedTurnUsage] = [],
+        historyCoverageComplete: Bool = false,
+        sourceReadsStable: Bool = false,
+        cpaSnapshots: [V013CPARawUsageSnapshot] = [],
+        apiPricingPolicy: V013APIPricingPolicy = .recordedTier
     ) -> V013WeeklyUsageStatus {
         guard let snapshot = officialSnapshot,
-              snapshot.isFresh(at: now),
-              let window = snapshot.windows.first(where: {
-                  $0.durationMinutes == 10_080
-              }),
-              let resetsAt = window.resetsAt else {
+              snapshot.isFresh(at: now) else {
             return unavailable(
                 "官方每周窗口未知或已过期",
-                observations: [],
+                usedPercent: nil,
+                supplemental: .empty
+            )
+        }
+        let weeklyWindows = snapshot.windows.filter {
+            $0.durationMinutes == 10_080
+        }
+        guard weeklyWindows.count == 1,
+              let window = weeklyWindows.first,
+              let resetsAt = window.resetsAt,
+              resetsAt > snapshot.observedAt else {
+            return unavailable(
+                "官方每周窗口缺失、歧义或重置时间无效",
                 usedPercent: nil,
                 supplemental: .empty
             )
@@ -362,165 +566,77 @@ enum V013WeeklyUsageEstimator {
                 && $0.windowMinutes == 10_080
                 && abs($0.resetsAt.timeIntervalSince(resetsAt)) <= 60
         }.sorted { $0.observedAt < $1.observedAt }
-        let supplemental = V013UsageEvidenceBuilder.build(
+        var supplemental = V013UsageEvidenceBuilder.build(
             ledger: ledger,
             snapshot: snapshot,
             window: window,
             observations: observations,
+            turns: turns,
+            historyCoverageComplete: historyCoverageComplete,
+            sourceReadsStable: sourceReadsStable,
             planType: planType,
-            pricing: pricing
+            pricing: pricing,
+            apiPricingPolicy: apiPricingPolicy
         )
-        guard window.usedPercent > 0 else {
+        // Choose one independent source; empty or incomplete captures must not
+        // displace a complete native interval. Never add captured and native totals.
+        if let selected = V013CPAEvidenceSelection.evaluate(
+            snapshots: cpaSnapshots, officialSnapshot: snapshot,
+            window: window, pricing: pricing, now: now, nativeEvaluation: supplemental.cpaQuota
+        ) {
+            supplemental = V013SupplementalUsageEvidence(
+                observed: supplemental.observed,
+                officialActivity: supplemental.officialActivity,
+                currentEquivalentCapacity: supplemental.currentEquivalentCapacity,
+                cpaQuota: selected,
+                historicalEquivalentCapacity: supplemental.historicalEquivalentCapacity,
+                percentageTransitionCount: selected.percentageTransitionCount,
+                usableIntervalCount: selected.usableIntervalCount
+            )
+        }
+        guard let cpa = supplemental.cpaQuota.estimate else {
             return unavailable(
-                "官方每周已用为 0%，暂不反推满额",
-                observations: observations,
+                supplemental.cpaQuota.reason,
                 usedPercent: window.usedPercent,
                 supplemental: supplemental
             )
-        }
-        guard let first = observations.first,
-              let latest = observations.last,
-              latest.usedPercent == window.usedPercent else {
-            return unavailable(
-                "官方百分比与本地观察尚未对齐",
-                observations: observations,
-                usedPercent: window.usedPercent,
-                supplemental: supplemental
-            )
-        }
-        let windowStart = resetsAt.addingTimeInterval(
-            -Double(window.durationMinutes ?? 10_080) * 60
-        )
-        guard first.usedPercent == 0,
-              first.observedAt <= windowStart.addingTimeInterval(15 * 60)
-        else {
-            return unavailable(
-                "尚未从本周重置起完整观察，满额 Token 与金额保持未知",
-                observations: observations,
-                usedPercent: window.usedPercent,
-                supplemental: supplemental
-            )
-        }
-        guard observations.allSatisfy({
-            $0.historyCoverageComplete && $0.sourceReadsStable
-        }) else {
-            return unavailable(
-                "本周历史页或正在写入的来源未完整覆盖",
-                observations: observations,
-                usedPercent: window.usedPercent,
-                supplemental: supplemental
-            )
-        }
-        let currentRecords = ledger.records.filter {
-            $0.providerID.caseInsensitiveCompare("openai") == .orderedSame
-                && $0.completedAt >= first.observedAt
-                && $0.completedAt <= snapshot.observedAt
-                && $0.accountScopeSHA256 == snapshot.accountScopeSHA256
-        }
-        guard !currentRecords.isEmpty else {
-            return unavailable(
-                "完整窗口内尚无可计量完成请求",
-                observations: observations,
-                usedPercent: window.usedPercent,
-                supplemental: supplemental
-            )
-        }
-        guard currentRecords.allSatisfy(\.identityBoundAtCompletion) else {
-            return unavailable(
-                "部分历史请求无法证明与当前账号在完成时匹配",
-                observations: observations,
-                usedPercent: window.usedPercent,
-                supplemental: supplemental
-            )
-        }
-        let observedTokens = currentRecords.reduce(Int64(0)) {
-            $0 + $1.billableTokens
-        }
-        guard observedTokens > 0 else {
-            return unavailable(
-                "完整窗口内计费 Token 为 0",
-                observations: observations,
-                usedPercent: window.usedPercent,
-                supplemental: supplemental
-            )
-        }
-        let currentCosts = currentRecords.map {
-            $0.repriced(
-                officialPricing: pricing,
-                planType: planType
-            )
-        }
-        let credits = completeSum(currentCosts.map(\.credits))
-        let apiUSD = completeSum(
-            currentCosts.map(\.apiEquivalentUSD)
-        )
-        let fraction = Double(window.usedPercent) / 100
-        let resolutionLowerPercent = max(
-            0,
-            Double(window.usedPercent) - 0.5
-        )
-        let resolutionUpperPercent = min(
-            100,
-            Double(window.usedPercent) + 0.5
-        )
-        let segmentTokens = segmentValues(
-            observations: observations,
-            records: currentRecords,
-            value: { Double($0.billableTokens) }
-        )
-        let segmentUSD = segmentValues(
-            observations: observations,
-            records: currentRecords,
-            value: {
-                $0.repriced(
-                    officialPricing: pricing,
-                    planType: planType
-                ).apiEquivalentUSD
-            }
-        )
-        let confidence: V013WeeklyUsageEstimate.Confidence
-        if supplemental.usableIntervalCount >= 3
-            && observations.count >= 4 {
-            confidence = .high
-        } else if supplemental.usableIntervalCount >= 2 {
-            confidence = .medium
-        } else {
-            confidence = .low
         }
         let estimate = V013WeeklyUsageEstimate(
             usedPercent: window.usedPercent,
             resetsAt: resetsAt,
-            observedWindowTokens: observedTokens,
-            observedWindowCredits: credits,
-            observedWindowAPIEquivalentUSD: apiUSD,
-            fullWeekTokens: Double(observedTokens) / fraction,
-            fullWeekCredits: credits.map { $0 / fraction },
-            fullWeekAPIEquivalentUSD: apiUSD.map { $0 / fraction },
-            lowerWeekTokens: bounds(segmentTokens)?.lower,
-            upperWeekTokens: bounds(segmentTokens)?.upper,
-            lowerWeekAPIEquivalentUSD: bounds(segmentUSD)?.lower,
-            upperWeekAPIEquivalentUSD: bounds(segmentUSD)?.upper,
-            resolutionLowerWeekTokens:
-                Double(observedTokens)
-                    / (resolutionUpperPercent / 100),
-            resolutionUpperWeekTokens:
-                resolutionLowerPercent > 0
-                    ? Double(observedTokens)
-                        / (resolutionLowerPercent / 100)
-                    : nil,
-            observationCount: observations.count,
+            observedWindowTokens: cpa.observedTokens,
+            observedWindowCredits: cpa.observedCredits,
+            observedWindowAPIEquivalentUSD:
+                cpa.observedAPIEquivalentUSD,
+            pointWeekTokens: cpa.pointFullWindowTokens,
+            lowerWeekTokens: cpa.lowerFullWindowTokens,
+            upperWeekTokens: cpa.upperFullWindowTokens,
+            pointWeekCredits: cpa.pointFullWindowCredits,
+            lowerWeekCredits: cpa.lowerFullWindowCredits,
+            upperWeekCredits: cpa.upperFullWindowCredits,
+            pointWeekAPIEquivalentUSD:
+                cpa.pointFullWindowAPIEquivalentUSD,
+            lowerWeekAPIEquivalentUSD:
+                cpa.lowerFullWindowAPIEquivalentUSD,
+            upperWeekAPIEquivalentUSD:
+                cpa.upperFullWindowAPIEquivalentUSD,
+            observationCount:
+                supplemental.cpaQuota.observationCount,
             percentageTransitionCount:
                 supplemental.percentageTransitionCount,
             usableIntervalSampleCount:
                 supplemental.usableIntervalCount,
-            confidence: confidence,
+            confidence: cpa.confidence,
+            apiIntervalSampleCount: cpa.apiIntervalSampleCount,
+            creditsIntervalSampleCount: cpa.creditsIntervalSampleCount,
             refreshedAt: snapshot.observedAt,
-            pricingRevision: pricing.revision
+            pricingSnapshotID: pricing.id
         )
         return V013WeeklyUsageStatus(
             estimate: estimate,
-            reason: "本周窗口、账号与本地账本完整匹配",
-            observationCount: observations.count,
+            reason: supplemental.cpaQuota.reason,
+            observationCount:
+                supplemental.cpaQuota.observationCount,
             percentageTransitionCount:
                 supplemental.percentageTransitionCount,
             usableIntervalSampleCount:
@@ -532,14 +648,13 @@ enum V013WeeklyUsageEstimator {
 
     private static func unavailable(
         _ reason: String,
-        observations: [V013QuotaLedgerObservation],
         usedPercent: Int?,
         supplemental: V013SupplementalUsageEvidence
     ) -> V013WeeklyUsageStatus {
         return V013WeeklyUsageStatus(
             estimate: nil,
             reason: reason,
-            observationCount: observations.count,
+            observationCount: supplemental.cpaQuota.observationCount,
             percentageTransitionCount:
                 supplemental.percentageTransitionCount,
             usableIntervalSampleCount:
@@ -547,43 +662,5 @@ enum V013WeeklyUsageEstimator {
             officialUsedPercent: usedPercent,
             supplemental: supplemental
         )
-    }
-
-    private static func segmentValues(
-        observations: [V013QuotaLedgerObservation],
-        records: [V013UsageLedgerRecord],
-        value: (V013UsageLedgerRecord) -> Double?
-    ) -> [Double] {
-        var values: [Double] = []
-        for pair in zip(observations, observations.dropFirst()) {
-            let delta = pair.1.usedPercent - pair.0.usedPercent
-            guard delta > 0 else { continue }
-            let segment = records.filter {
-                $0.completedAt > pair.0.observedAt
-                    && $0.completedAt <= pair.1.observedAt
-            }
-            let costs = segment.compactMap(value)
-            guard costs.count == segment.count, !costs.isEmpty else {
-                continue
-            }
-            values.append(costs.reduce(0, +) * 100 / Double(delta))
-        }
-        return values
-    }
-
-    private static func completeSum(
-        _ values: [Double?]
-    ) -> Double? {
-        guard values.allSatisfy({ $0 != nil }) else { return nil }
-        return values.compactMap { $0 }.reduce(0, +)
-    }
-
-    private static func bounds(
-        _ values: [Double]
-    ) -> (lower: Double, upper: Double)? {
-        guard values.count >= 2,
-              let lower = values.min(),
-              let upper = values.max() else { return nil }
-        return (lower, upper)
     }
 }

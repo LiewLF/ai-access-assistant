@@ -3,6 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct BeginnerSavedRelayEditor: View {
+    @Environment(\.appDisplayTextSize) private var displayTextSize
     let sourceProfile: CodexRelayProfile
     let isCurrent: Bool
     let save: (CodexRelayProfile, String?) -> Void
@@ -55,7 +56,7 @@ struct BeginnerSavedRelayEditor: View {
                     Label(
                         isCurrent
                             ? "当前轨：只处理配置并快速重开Codex，不扫描或改写历史会话；失败恢复原配置。"
-                            : "非当前轨：先验证目标，再CAS保存；当前Codex不变。",
+                            : "非当前轨：先验证目标，资料未被其他操作修改时才保存；当前Codex不变。",
                         systemImage: isCurrent
                             ? "arrow.triangle.2.circlepath"
                             : "checkmark.shield"
@@ -71,6 +72,7 @@ struct BeginnerSavedRelayEditor: View {
                             text: $displayName
                         )
                         .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("中转名称")
                     }
 
                     editorField("中转接口地址（Base URL）") {
@@ -80,8 +82,9 @@ struct BeginnerSavedRelayEditor: View {
                                 text: $baseURL
                             )
                             .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("中转接口地址")
                             Text(
-                                "只接受HTTPS，或本机localhost/127.0.0.1/::1的HTTP地址。"
+                                "填写基础接口地址，不含完整请求路径、查询参数或账号信息。本机HTTP仅接受已确认网关的127.0.0.1:1024–65535。"
                             )
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -109,6 +112,7 @@ struct BeginnerSavedRelayEditor: View {
                                 text: $defaultModel
                             )
                             .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("默认模型")
                             Text(
                                 "新模型只记为待验证；填写名称不会证明中转真实支持。"
                             )
@@ -124,6 +128,7 @@ struct BeginnerSavedRelayEditor: View {
                                 text: $replacementAPIKey
                             )
                             .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("更新中转密钥，可留空")
                             .disabled(isCurrent)
                             Text(
                                 isCurrent
@@ -195,6 +200,7 @@ struct BeginnerSavedRelayEditor: View {
             HStack {
                 Spacer()
                 Button("取消") { cancel() }
+                    .keyboardShortcut(.cancelAction)
                 Button("验证并保存") {
                     guard let targetProfile else { return }
                     save(
@@ -208,7 +214,10 @@ struct BeginnerSavedRelayEditor: View {
             }
             .padding(18)
         }
-        .frame(minWidth: 680, minHeight: 620)
+        .appDisplayScale(displayTextSize)
+        .frame(minWidth: 520, idealWidth: 680, maxWidth: 800,
+               minHeight: 440, idealHeight: 620, maxHeight: 820)
+        .accessibilityIdentifier("relay.saved-editor")
         .alert(
             "删除“\(sourceProfile.name)”？",
             isPresented: $deletionConfirmationOpen
@@ -235,7 +244,8 @@ struct BeginnerSavedRelayEditor: View {
             in: .whitespacesAndNewlines
         )
         guard !name.isEmpty,
-              CodexPlusPlusAdapter.isAllowedBaseURL(endpoint),
+              V011RelayEndpointPolicy.draftIssue(endpoint,
+                localGatewayConfirmed: sourceProfile.localGatewayConfirmed == true) == nil,
               !model.isEmpty else {
             return nil
         }
@@ -252,8 +262,9 @@ struct BeginnerSavedRelayEditor: View {
         ).isEmpty {
             return "中转名称不能为空。"
         }
-        if !CodexPlusPlusAdapter.isAllowedBaseURL(baseURL) {
-            return "中转地址必须是HTTPS，或明确的本机HTTP地址。"
+        if let issue = V011RelayEndpointPolicy.draftIssue(baseURL,
+            localGatewayConfirmed: sourceProfile.localGatewayConfirmed == true) {
+            return issue
         }
         if defaultModel.trimmingCharacters(
             in: .whitespacesAndNewlines

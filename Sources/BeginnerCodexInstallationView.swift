@@ -18,18 +18,18 @@ struct BeginnerCodexInstallationView: View {
     @State private var confirmsOpeningCodex = false
     @State private var confirmsOfficialConnectionCheck = false
 
-    private var officialConnectionVerified: Bool {
-        accessModel.liveState != nil
-            && accessModel.currentProviderID == nil
-            && accessModel.isCurrentConnectionVerified
-    }
-
     private var guidance: CodexInstallationGuidance {
-        CodexInstallationGuidanceEvaluator.evaluate(
+        CodexInstallationReadinessGuidance.resolve(
+            accessModel: accessModel,
             host: host,
             installation: installation,
-            endpointState: diagnosticReport?.endpoints.first?.state,
-            officialConnectionVerified: officialConnectionVerified
+            endpointState: diagnosticReport?.endpoints.first?.state
+        )
+    }
+
+    private var reverificationDecision: V016AccessReadinessDecision? {
+        CodexInstallationReadinessGuidance.reverificationDecision(
+            accessModel: accessModel, baseline: guidance
         )
     }
 
@@ -78,7 +78,13 @@ struct BeginnerCodexInstallationView: View {
                     .disabled(isDiagnosing)
                 }
 
-                installationStatusCard
+                if let decision = reverificationDecision {
+                    BeginnerRuntimeReverificationCard(
+                        accessModel: accessModel, decision: decision
+                    )
+                } else {
+                    installationStatusCard
+                }
 
                 VStack(alignment: .leading, spacing: 7) {
                     Text("官方来源")
@@ -97,7 +103,7 @@ struct BeginnerCodexInstallationView: View {
                     in: RoundedRectangle(cornerRadius: 12)
                 )
 
-                if !guidance.steps.isEmpty {
+                if reverificationDecision == nil && !guidance.steps.isEmpty {
                     VStack(alignment: .leading, spacing: 9) {
                         Text("安装与登录步骤")
                             .font(.headline)
@@ -117,7 +123,9 @@ struct BeginnerCodexInstallationView: View {
                     )
                 }
 
-                actionButtons
+                if reverificationDecision == nil {
+                    actionButtons
+                }
 
                 if let endpoint = diagnosticReport?.endpoints.first {
                     Label(
@@ -199,7 +207,8 @@ struct BeginnerCodexInstallationView: View {
             Text("下一步：\(guidance.nextAction)")
                 .font(.callout.weight(.medium))
             if let checkError = accessModel.currentConnectionCheckError,
-               installation.state != .notInstalled {
+               installation.state != .notInstalled,
+               guidance.state != .officialReady {
                 Text("连接检查：\(BeginnerText.friendly(checkError))")
                     .font(.callout)
                     .foregroundStyle(.red)

@@ -465,6 +465,7 @@ struct RelayProfile: Equatable {
     let fastMode: FableFieldIntent<Bool>
     let supportsWebSockets: FableFieldIntent<Bool>
     let supportsStandaloneWebSearch: FableFieldIntent<Bool>
+    let localGatewayConfirmed: Bool
 
     init(
         id: String,
@@ -488,7 +489,8 @@ struct RelayProfile: Equatable {
         supportsWebSockets:
             FableFieldIntent<Bool> = .preserve,
         supportsStandaloneWebSearch:
-            FableFieldIntent<Bool> = .preserve
+            FableFieldIntent<Bool> = .preserve,
+        localGatewayConfirmed: Bool = false
     ) {
         self.id = id
         self.providerID = providerID
@@ -510,6 +512,7 @@ struct RelayProfile: Equatable {
         self.supportsWebSockets = supportsWebSockets
         self.supportsStandaloneWebSearch =
             supportsStandaloneWebSearch
+        self.localGatewayConfirmed = localGatewayConfirmed
     }
 
     var providerConfigurationName: String {
@@ -1405,14 +1408,8 @@ struct FableSwitchCore {
                 )
             }
         }
-        guard let components = URLComponents(string: profile.baseURL),
-              components.scheme?.lowercased() == "https",
-              components.host?.isEmpty == false,
-              components.user == nil,
-              components.password == nil,
-              components.query == nil,
-              components.fragment == nil else {
-            throw FableSwitchError.invalidProfile("Base URL必须是无账号、查询参数和片段的HTTPS地址")
+        guard V011RelayEndpointPolicy.allows(profile) else {
+            throw FableSwitchError.invalidProfile("Base URL须为HTTPS或用户明确确认的本机回环HTTP地址，且不含账号、查询参数或片段")
         }
         let efforts = Set(["low", "medium", "high", "xhigh", "max", "ultra"])
         guard efforts.contains(profile.reasoningEffort) else {

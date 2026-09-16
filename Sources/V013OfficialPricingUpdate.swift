@@ -27,23 +27,23 @@ struct V013OfficialPricingStore {
 
     let fileURL: URL
     private let fileManager: FileManager
-    private let writer: FableAtomicConfigWriter
+    private let writer: V011ReceiptFileWriter
 
     init(
         fileURL: URL,
-        fileManager: FileManager = .default,
-        writer: FableAtomicConfigWriter = FableAtomicConfigWriter()
+        fileManager: FileManager = .default
     ) {
         self.fileURL = fileURL.standardizedFileURL
         self.fileManager = fileManager
-        self.writer = writer
+        writer = V011ReceiptFileWriter(fileManager: fileManager)
     }
 
     func load() throws -> V013OfficialPricingSnapshot? {
         guard fileManager.fileExists(atPath: fileURL.path) else {
             return nil
         }
-        let values = try fileURL.resourceValues(forKeys: [
+        // Re-read metadata so a restored file is not rejected using a cached size.
+        let values = try URL(fileURLWithPath: fileURL.path).resourceValues(forKeys: [
             .isRegularFileKey,
             .isSymbolicLinkKey,
             .fileSizeKey,
@@ -60,7 +60,8 @@ struct V013OfficialPricingStore {
             V013OfficialPricingDocument.self,
             from: Data(contentsOf: fileURL)
         )
-        guard document.schemaVersion == 1,
+        guard document.schemaVersion
+                == V013OfficialPricingSnapshot.schemaVersion,
               document.active.isStructurallyValid else {
             throw V012PricingError.invalidValue
         }
@@ -68,6 +69,8 @@ struct V013OfficialPricingStore {
     }
 
     func commit(_ value: V013OfficialPricingSnapshot) throws {
+        do { _ = try load() }
+        catch { throw V012PricingError.unreadableLocalFile }
         guard value.isStructurallyValid else {
             throw V012PricingError.invalidValue
         }
@@ -81,24 +84,20 @@ struct V013OfficialPricingStore {
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(
             V013OfficialPricingDocument(
-                schemaVersion: 1,
+                schemaVersion: V013OfficialPricingSnapshot.schemaVersion,
                 active: value
             )
         )
         guard data.count <= Self.maximumBytes else {
             throw V012PricingError.responseTooLarge
         }
-        try writer.write(
-            data,
-            to: fileURL,
-            expectedCurrentHash:
-                SessionSyncFileSafety.hashIfPresent(fileURL)
-        )
+        try writer.write(data, to: fileURL)
     }
 }
 
 struct V013OfficialPricingChecker: Sendable {
     static let maximumBytes = 128 * 1024
+    typealias Transport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
     struct APIPrice: Equatable {
         let model: String
@@ -108,21 +107,22 @@ struct V013OfficialPricingChecker: Sendable {
     }
 
     let now: @Sendable () -> Date
+    private let transport: Transport?
 
-    init(now: @escaping @Sendable () -> Date = { Date() }) {
+    init(now: @escaping @Sendable () -> Date = { Date() }, transport: Transport? = nil) {
         self.now = now
+        self.transport = transport
     }
 
     func check(
         current: V013OfficialPricingSnapshot
     ) async throws -> V013OfficialPricingSnapshot {
-        async let sol = fetchModel("gpt-5.6-sol")
-        async let terra = fetchModel("gpt-5.6-terra")
-        async let luna = fetchModel("gpt-5.6-luna")
+        let models = Set(current.rates.map(\.model)).sorted()
         async let speed = fetch(
             URL(string: "https://developers.openai.com/codex/speed.md")!
         )
-        let prices = try await [sol, terra, luna]
+        var prices: [APIPrice] = []
+        for model in models { prices.append(try await fetchModel(model)) }
         let speedText = String(decoding: try await speed, as: UTF8.self)
         let normalizedSpeed = speedText.split(whereSeparator: {
             $0.isWhitespace
@@ -160,11 +160,16 @@ struct V013OfficialPricingChecker: Sendable {
             throw V013OfficialPricingUpdateError.responseTooLarge
         }
         let text = String(decoding: data, as: UTF8.self)
+        let normalized = text.split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        let supportedLongContext = normalized.contains(
+            "Prompts with >272K input tokens are priced at 2x input and 1.5x output"
+        ) || normalized.contains(
+            "Prompts with more than 272K input tokens are priced at 2x input and cache rates and 1.5x output"
+        )
         guard text.contains("Model ID: `\(expectedModel)`"),
-              text.contains(
-                  "Prompts with >272K input tokens are priced at 2x input and 1.5x output"
-              ),
-              text.contains(
+              supportedLongContext,
+              normalized.contains(
                   "Cache writes are billed at 1.25x the uncached input token rate"
               ),
               let input = tablePrice("Input", in: text),
@@ -204,7 +209,8 @@ struct V013OfficialPricingChecker: Sendable {
         request.setValue("text/markdown", forHTTPHeaderField: "Accept")
         let pair: (Data, URLResponse)
         do {
-            pair = try await session.data(for: request)
+            if let transport { pair = try await transport(request) }
+            else { pair = try await session.data(for: request) }
         } catch {
             throw V013OfficialPricingUpdateError.unavailable
         }

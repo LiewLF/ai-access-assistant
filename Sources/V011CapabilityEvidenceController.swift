@@ -1,5 +1,10 @@
 import Foundation
 
+enum V011CapabilityEvidenceReloadResult: Sendable {
+    case loaded([ProviderCapabilityProbeReceipt])
+    case failed(String)
+}
+
 @MainActor
 protocol V011CapabilityEvidenceControllerDelegate: AnyObject {
     var allowsCapabilityEvidenceActionStart: Bool { get }
@@ -9,6 +14,9 @@ protocol V011CapabilityEvidenceControllerDelegate: AnyObject {
     var currentCodexContractID: String? { get }
     var currentRelayProfile: CodexRelayProfile? { get }
 
+    func capabilityEvidenceReceiptReloadDidReceive(
+        _ result: V011CapabilityEvidenceReloadResult
+    )
     func capabilityEvidencePendingRecoveryBlockMessage(
         action: String
     ) -> String
@@ -43,6 +51,12 @@ final class V011CapabilityEvidenceController {
     private let optionalProbeService:
         V011OptionalProviderProbeActionService
     private let catalogService: V011ManagedModelCatalogActionService
+    private let controlRoot: URL
+    private let keyProvider: @Sendable () throws -> Data
+    private var receiptReloadTask: Task<Void, Never>?
+    private var receiptReloadTimeoutTask: Task<Void, Never>?
+    private var receiptReloadGeneration: UInt64 = 0
+    private var receiptReloadRequested = false
 
     init(
         dependencies: V011AccessDependencies,
@@ -56,6 +70,67 @@ final class V011CapabilityEvidenceController {
             dependencies: dependencies
         )
         self.delegate = delegate
+        controlRoot = dependencies.controlRoot
+        keyProvider = dependencies.keyProvider
+    }
+
+    var hasPendingReceiptRead: Bool { receiptReloadTask != nil }
+
+    /// Optional receipt I/O must never hold the main actor or core refresh.
+    /// A blocked OS call keeps one worker; timeout does not launch a replacement.
+    func reloadReceipts() {
+        receiptReloadGeneration &+= 1
+        receiptReloadRequested = true
+        let generation = receiptReloadGeneration
+        receiptReloadTimeoutTask?.cancel()
+        receiptReloadTimeoutTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: 5_000_000_000) }
+            catch { return }
+            guard let self, self.receiptReloadGeneration == generation else { return }
+            self.invalidateReceiptReload()
+            self.delegate?.capabilityEvidenceReceiptReloadDidReceive(.failed(
+                "扩展能力验证记录暂未读完；当前接入状态已保留，可稍后重新读取。"
+            ))
+        }
+        startReceiptReloadIfPossible()
+    }
+
+    /// A newer durable result must win over a read that captured older bytes.
+    func invalidateReceiptReload() {
+        receiptReloadGeneration &+= 1
+        receiptReloadRequested = false
+        receiptReloadTimeoutTask?.cancel()
+        receiptReloadTimeoutTask = nil
+    }
+
+    private func startReceiptReloadIfPossible() {
+        guard receiptReloadTask == nil, receiptReloadRequested else { return }
+        receiptReloadRequested = false
+        let generation = receiptReloadGeneration
+        let controlRoot = controlRoot
+        let keyProvider = keyProvider
+        receiptReloadTask = Task { [weak self] in
+            let result = await Task.detached(priority: .utility) {
+                do {
+                    let receipts = try V011ProviderCapabilityEvidenceService(
+                        controlRoot: controlRoot, keyProvider: keyProvider
+                    ).load()
+                    return V011CapabilityEvidenceReloadResult.loaded(receipts)
+                } catch {
+                    return V011CapabilityEvidenceReloadResult.failed(
+                        "扩展能力验证记录无法读取：" + error.localizedDescription
+                    )
+                }
+            }.value
+            guard let self else { return }
+            self.receiptReloadTask = nil
+            if self.receiptReloadGeneration == generation {
+                self.receiptReloadTimeoutTask?.cancel()
+                self.receiptReloadTimeoutTask = nil
+                self.delegate?.capabilityEvidenceReceiptReloadDidReceive(result)
+            }
+            self.startReceiptReloadIfPossible()
+        }
     }
 
     func runOptionalProbe(

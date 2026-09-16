@@ -47,14 +47,20 @@ final class ConfigWorkspaceModel:
     @Published var selectedAccessRoute = AccessRouteKind.managed
     @Published var agent = DesktopAgent.codexDesktop
     @Published var providerName = ""
-    @Published var baseURL = ""
-    @Published var apiKey = ""
+    @Published var baseURL = "" {
+        didSet { if oldValue != baseURL { sourceAcquisitionController.modelInputsDidChange() } }
+    }
+    @Published var apiKey = "" {
+        didSet { if oldValue != apiKey { sourceAcquisitionController.modelInputsDidChange() } }
+    }
     @Published var modelName = ""
     @Published var modelNames: [String] = []
     @Published var newModelName = ""
     @Published var isFetchingModels = false
     @Published var modelFetchStatus = "可手动添加，也可从中转在线拉取"
-    @Published var wireProtocol = RelayWireProtocol.responses
+    @Published var wireProtocol = RelayWireProtocol.responses {
+        didSet { if oldValue != wireProtocol { sourceAcquisitionController.modelInputsDidChange() } }
+    }
     @Published var contextWindow = ""
     @Published var autoCompactTokenLimit = ""
     @Published var remoteCompactionSetting =
@@ -71,7 +77,9 @@ final class ConfigWorkspaceModel:
     @Published var responseStorageDisabledSetting =
         ProviderOptionalBooleanSetting.preserve
     @Published var providerCompatibilityName = ""
-    @Published var confirmsLocalGateway = false
+    @Published var confirmsLocalGateway = false {
+        didSet { if oldValue != confirmsLocalGateway { sourceAcquisitionController.modelInputsDidChange() } }
+    }
     @Published var documentURL = ""
     @Published var documentTitle = ""
     @Published var documentText = ""
@@ -2036,7 +2044,7 @@ final class ConfigWorkspaceModel:
         if modelName.isEmpty { modelName = value }
         newModelName = ""
         // A successful manual addition supersedes a prior /models warning.
-        modelFetchStatus = "已手动添加模型：\(value)"
+        sourceAcquisitionController.noteManualModelAdded(value)
         if errorMessage == ModelCatalogError.emptyModels.localizedDescription {
             errorMessage = nil
         }
@@ -2056,17 +2064,9 @@ final class ConfigWorkspaceModel:
         invalidatePreview()
     }
 
-    func fetchModels() {
-        isFetchingModels = true
-        modelFetchStatus = "正在安全读取模型列表"
-        errorMessage = nil
-        sourceAcquisitionController.acquireModels(
-            baseURL: baseURL,
-            apiKey: apiKey,
-            wireProtocol: wireProtocol,
-            confirmedLocalGateway: confirmsLocalGateway
-        )
-    }
+    func fetchModels() { sourceAcquisitionController.acquireModels() }
+
+    func cancelModelFetch() { sourceAcquisitionController.cancelModels() }
 
     func recordManualField(_ field: String, value: String) {
         let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)

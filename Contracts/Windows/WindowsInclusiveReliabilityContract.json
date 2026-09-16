@@ -139,7 +139,7 @@
     },
     {
       "id": "build-input-lock",
-      "command": "python3 Scripts/build_input_contract.py --verify --root . --lock BuildInputs.lock.json --allow-dirty"
+      "command": "python3 Scripts/build_input_contract.py --verify --root . --lock Contracts/Build/BuildInputs.lock.json --allow-dirty"
     },
     {
       "id": "release-readiness",

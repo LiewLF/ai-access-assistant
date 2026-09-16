@@ -7,8 +7,19 @@ enum MainMode: String, CaseIterable, Identifiable, Sendable {
     case home = "开始"
     case access = "接入与切换"
     case sessions = "历史会话"
+    case capabilities = "能力"
+    case settings = "设置与诊断"
 
     var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .home: return "首页"
+        case .access: return "接入"
+        case .sessions: return "历史"
+        case .capabilities, .settings: return rawValue
+        }
+    }
 
     var systemImage: String {
         switch self {
@@ -18,6 +29,10 @@ enum MainMode: String, CaseIterable, Identifiable, Sendable {
             return "arrow.triangle.2.circlepath"
         case .sessions:
             return "bubble.left.and.bubble.right"
+        case .capabilities:
+            return "sparkles"
+        case .settings:
+            return "gearshape"
         }
     }
 }
@@ -81,11 +96,11 @@ enum AppDisplayTextSize:
         }
     }
 
-    var dynamicTypeSize: DynamicTypeSize {
+    var scaleFactor: CGFloat {
         switch self {
-        case .standard: return .large
-        case .large: return .xLarge
-        case .extraLarge: return .xxLarge
+        case .standard: return 1
+        case .large: return 1.15
+        case .extraLarge: return 1.3
         }
     }
 }
@@ -95,33 +110,44 @@ final class AppShellState: ObservableObject {
     @Published private(set) var mode: MainMode = .home
     @Published private(set) var accessSection:
         BeginnerAccessSection = .addRelay
-    @Published private(set) var settingsOpen = false
-    @Published private(set) var settingsInitialSection:
+    @Published private(set) var settingsSection:
         BeginnerSettingsSection = .software
+    @Published private(set) var isContinuityImportWorking = false
+
+    var navigationLocked: Bool { isContinuityImportWorking }
 
     func selectMainMode(_ mode: MainMode) {
+        guard !navigationLocked else { return }
         self.mode = mode
     }
 
-    func selectAccessSection(
-        _ section: BeginnerAccessSection
-    ) {
+    func selectAccessSection(_ section: BeginnerAccessSection) {
+        guard !navigationLocked else { return }
         accessSection = section
     }
 
     func openAccess(_ section: BeginnerAccessSection) {
+        guard !navigationLocked else { return }
         accessSection = section
         mode = .access
     }
 
     func openSettings(_ section: BeginnerSettingsSection) {
-        settingsInitialSection = section
-        settingsOpen = true
+        guard !navigationLocked else { return }
+        // Existing guide and recovery callbacks keep their route;
+        // capabilities now has one primary owner.
+        if section == .capabilities {
+            mode = .capabilities
+        } else {
+            settingsSection = section
+            mode = .settings
+        }
     }
 
-    func setSettingsPresented(_ presented: Bool) {
-        settingsOpen = presented
+    func setContinuityImportWorking(_ working: Bool) {
+        isContinuityImportWorking = working
     }
+
 }
 
 enum AppVaultKeyMigrationState: Equatable, Sendable {

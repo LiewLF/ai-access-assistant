@@ -30,13 +30,9 @@ struct V011RelayProfileService {
             )
             + "_"
             + suffix
-        if let existing = state.relayProfiles.first(
-            where: {
-                $0.v011ProviderID == providerID
-                    && $0.baseURL != draft.baseURL
-            }
-        ) {
-            _ = existing
+        if state.relayProfiles.contains(where: {
+            $0.v011ProviderID == providerID || $0.id == "relay-\(suffix)"
+        }) {
             throw V011AccessError.duplicateProvider
         }
         let capabilityProfile = draft.capabilityProfile?.rebased(

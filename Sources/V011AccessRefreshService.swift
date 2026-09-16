@@ -107,9 +107,9 @@ struct V011AccessRefreshService: @unchecked Sendable {
         if state.agentLoopMatches {
             agentLoopErrorMessage = nil
         } else if let receipt = state.agentLoopReceipt,
-                  receipt.configHash == state.live.configHash,
+                  receipt.targets(state.live),
                   let stage = receipt.failureStage {
-            let failure = V013FailurePresentation.agentLoop(stage)
+            let failure = V013FailurePresentation.agentLoop(stage, reason: receipt.failureReason)
             agentLoopErrorMessage =
                 "\(failure.conclusion)。\(failure.explanation)"
         } else {

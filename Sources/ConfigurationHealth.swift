@@ -596,23 +596,6 @@ enum ConfigurationHealthEvaluator {
                 : "未发现已知运行轨漂移；未知配置层仍按RuntimeTruth阻止。"
         ))
 
-        let transactionVerified = lastTransaction?.phase == .committed
-        items.append(item(
-            .runtime,
-            "最近切换事务",
-            transactionVerified ? .passed : .unverified,
-            lastTransaction.map {
-                "\($0.phase.rawValue)：\($0.message)"
-            } ?? "没有切换事务记录。"
-        ))
-        items.append(item(
-            .runtime,
-            "真实模型请求",
-            transactionVerified ? .passed : .unverified,
-            transactionVerified
-                ? "最近事务已完成模型接口和最小请求验证。"
-                : "尚无已提交事务证据；不根据配置存在推断接口可用。"
-        ))
         let currentProviderReceipts:
             [ProviderCapabilityProbeReceipt]
         if let expectedProviderID,
@@ -654,6 +637,12 @@ enum ConfigurationHealthEvaluator {
                 "尚未绑定当前Provider和Codex版本合同。"
             ))
         }
+        items.append(contentsOf: ConfigurationHealthRuntimeEvidence.items(
+            lastTransaction: lastTransaction,
+            receipt: latestProviderReceipt(.responsesText, in: currentProviderReceipts),
+            providerID: provider, modelID: model,
+            runtimeDrifted: runtimeTruth?.state == .drifted
+        ))
         let catalogReceipt = latestProviderReceipt(
             .modelCatalog,
             in: currentProviderReceipts
@@ -779,13 +768,12 @@ enum ConfigurationHealthEvaluator {
                 expectedAgentBundleIdentifier,
             expectedAgentVersion: expectedAgentVersion
         ) == true
-            || transactionVerified
         items.append(item(
             .capabilities,
             "协议",
             protocolVerified ? .passed : (wireProtocol == nil ? .unverified : .warning),
             protocolVerified
-                ? "最近已提交事务完成协议最小请求验证。"
+                ? "有效协议请求回执已通过；历史切换记录不参与此判断。"
                 : (wireProtocol.map { "配置声明\($0)，但尚无真实请求证据。" }
                     ?? "未识别活动Provider协议，尚未验证。")
         ))

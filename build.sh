@@ -15,7 +15,8 @@ PRODUCT_BUILD=$(
     "$ROOT/Info.plist"
 )
 TEMP_PACKAGE="${AI_ACCESS_TEMP_PACKAGE:-0}"
-EXPECTED_LOCAL_BUILD="178"
+PRIVATE_NO_HASH_PACKAGE="${AI_ACCESS_PRIVATE_NO_HASH_PACKAGE:-0}"
+EXPECTED_LOCAL_BUILD="186"
 if [[ "$TEMP_PACKAGE" == "1" ]]; then
   EXPECTED_LOCAL_BUILD="${AI_ACCESS_TEMP_PACKAGE_BUILD:-}"
   if [[ -z "$EXPECTED_LOCAL_BUILD" || "$EXPECTED_LOCAL_BUILD" != <-> ]]; then
@@ -24,6 +25,46 @@ if [[ "$TEMP_PACKAGE" == "1" ]]; then
   fi
 elif [[ "$TEMP_PACKAGE" != "0" ]]; then
   echo "AI_ACCESS_TEMP_PACKAGE must be 0 or 1" >&2
+  exit 1
+fi
+if [[ "$PRIVATE_NO_HASH_PACKAGE" == "1" ]]; then
+  case "${AI_ACCESS_PRIVATE_NO_HASH_PACKAGE_BUILD:-}" in
+    "") ;;
+    "187") EXPECTED_LOCAL_BUILD="187" ;;
+    "188") EXPECTED_LOCAL_BUILD="188" ;;
+    "189") EXPECTED_LOCAL_BUILD="189" ;;
+    "190") EXPECTED_LOCAL_BUILD="190" ;;
+    "191") EXPECTED_LOCAL_BUILD="191" ;;
+    "192") EXPECTED_LOCAL_BUILD="192" ;;
+    "193") EXPECTED_LOCAL_BUILD="193" ;;
+    "194") EXPECTED_LOCAL_BUILD="194" ;;
+    "195") EXPECTED_LOCAL_BUILD="195" ;;
+    "196") EXPECTED_LOCAL_BUILD="196" ;;
+    "197") EXPECTED_LOCAL_BUILD="197" ;;
+    "198") EXPECTED_LOCAL_BUILD="198" ;;
+    "199") EXPECTED_LOCAL_BUILD="199" ;;
+    "200") EXPECTED_LOCAL_BUILD="200" ;;
+    "201") EXPECTED_LOCAL_BUILD="201" ;;
+    "202") EXPECTED_LOCAL_BUILD="202" ;;
+    "203") EXPECTED_LOCAL_BUILD="203" ;;
+    "204") EXPECTED_LOCAL_BUILD="204" ;;
+    "205") EXPECTED_LOCAL_BUILD="205" ;;
+    "206") EXPECTED_LOCAL_BUILD="206" ;;
+    "207") EXPECTED_LOCAL_BUILD="207" ;;
+    "208") EXPECTED_LOCAL_BUILD="208" ;;
+    "209") EXPECTED_LOCAL_BUILD="209" ;;
+    "210") EXPECTED_LOCAL_BUILD="210" ;;
+    "211") EXPECTED_LOCAL_BUILD="211" ;;
+    "212") EXPECTED_LOCAL_BUILD="212" ;;
+    "220") EXPECTED_LOCAL_BUILD="220" ;;
+    "230") EXPECTED_LOCAL_BUILD="230" ;;
+    *)
+      echo "AI_ACCESS_PRIVATE_NO_HASH_PACKAGE_BUILD only permits Build187, Build188, Build189, Build190, Build191, Build192, Build193, Build194, Build195, Build196, Build197, Build198, Build199, Build200, Build201, Build202, Build203, Build204, Build205, Build206, Build207, Build208, Build209, Build210, Build211, Build212, Build220 or Build230" >&2
+      exit 1
+      ;;
+  esac
+elif [[ -n "${AI_ACCESS_PRIVATE_NO_HASH_PACKAGE_BUILD:-}" ]]; then
+  echo "AI_ACCESS_PRIVATE_NO_HASH_PACKAGE_BUILD requires AI_ACCESS_PRIVATE_NO_HASH_PACKAGE=1" >&2
   exit 1
 fi
 MINIMUM_MACOS=$(
@@ -67,6 +108,17 @@ if [[ "$PRODUCT_VERSION" != "0.12.0" || "$PRODUCT_BUILD" != "$EXPECTED_LOCAL_BUI
   echo "0.12.0 local arm64 test build requires Info.plist version 0.12.0 ($EXPECTED_LOCAL_BUILD)" >&2
   exit 1
 fi
+case "$PRIVATE_NO_HASH_PACKAGE" in
+  0)
+    ;;
+  1)
+    ;;
+  *)
+    echo "AI_ACCESS_PRIVATE_NO_HASH_PACKAGE must be 0 or 1" >&2
+    exit 1
+    ;;
+esac
+
 if ! awk '
   $0 == "version = \"0.11.0\"" { found = 1 }
   END { exit found ? 0 : 1 }
@@ -102,6 +154,13 @@ cp "$ROOT/Configuration/TrustedUpdatePublicKeys.json" "$RESOURCES/TrustedUpdateP
 cp \
   "$ROOT/SessionCore/THIRD_PARTY_NOTICES.md" \
   "$RESOURCES/SESSIONCORE-THIRD-PARTY-NOTICES.md"
+
+record_build_stage cpa_collector
+if [[ -z "${AI_ACCESS_CPA_RUNTIME:-}" ]]; then
+  echo "CPA runtime required; build pinned sources with Scripts/build-cpa-collector.py" >&2
+  exit 1
+fi
+python3 "$ROOT/Scripts/embed-cpa-collector.py" "$AI_ACCESS_CPA_RUNTIME" "$RESOURCES/CPACollector" "$ROOT"
 
 record_build_stage rust_session_core
 SESSION_CORE_BINARY=$(

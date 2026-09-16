@@ -149,6 +149,29 @@ struct V011ConnectionHealthService {
         receipt.freshness(at: now) == .fresh
     }
 
+    /// History remains readable; only a bounded observation of the current
+    /// configuration may drive the current failure card or its next action.
+    static func observationMatches(
+        _ observation: V011ConnectionHealthObservation,
+        live: LiveCodexState,
+        receipt: V011ConnectionReceipt?,
+        at now: Date
+    ) -> Bool {
+        guard observation.providerID == providerID(live),
+              observation.configHash == live.configHash,
+              observation.observedAt <= now,
+              now < observation.observedAt.addingTimeInterval(
+                  V011ConnectionReceipt.validityDuration
+              ) else { return false }
+        if observation.failureCode == .sessionProviderDrift {
+            guard let receipt,
+                  receipt.sessionProviderCheck == .drifted,
+                  receiptMatches(receipt, live: live, at: now)
+            else { return false }
+        }
+        return true
+    }
+
     static func runtimeFreshness(
         live: LiveCodexState,
         runtimeObservation: V011CodexRuntimeObservation

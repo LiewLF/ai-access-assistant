@@ -1,6 +1,6 @@
 # 隐私与本机数据说明
 
-适用版本：AI接入助手 `0.12.0 (178)` source-only preview。
+适用版本：AI接入助手 `0.12.0 (231)` source-only 连续源码快照（非 tag、非 Release）。
 
 ## 结论
 

@@ -74,11 +74,11 @@ struct V011OfficialCreditsSnapshot: Codable, Equatable {
     }
 
     var displayText: String {
-        if unlimited { return "已购 credits：无限" }
-        if let balance { return "已购 credits：\(balance)" }
+        if unlimited { return "官方 credits 余额：无限" }
+        if let balance { return "官方 credits 余额：\(balance)" }
         return hasCredits
-            ? "已购 credits：有，余额未返回"
-            : "已购 credits：无"
+            ? "官方 credits 余额：未返回（可用）"
+            : "官方 credits 余额：未返回（当前不可用）"
     }
 
     static func parse(_ value: Any?) throws -> Self? {
@@ -225,17 +225,13 @@ struct V011OfficialThreadUsageGroup: Codable, Equatable {
 }
 
 struct V011OfficialThreadUsage: Codable, Equatable {
-    let threadScopeSHA256: String
     let estimatedUsageCreditsMicros: Int64
     let estimatedUsageUSDMicros: Int64?
     let groups: [V011OfficialThreadUsageGroup]
+    var sourceThreadIDHash: String? = nil
 
     var isStructurallyValid: Bool {
-        threadScopeSHA256.count == 64
-            && threadScopeSHA256.allSatisfy {
-                $0.isHexDigit && !$0.isUppercase
-            }
-            && estimatedUsageCreditsMicros >= 0
+        estimatedUsageCreditsMicros >= 0
             && estimatedUsageUSDMicros.map { $0 >= 0 } != false
             && groups.count <= 128
             && groups.allSatisfy(\.isStructurallyValid)
@@ -402,10 +398,7 @@ struct V011OfficialTokenUsageSnapshot: Codable, Equatable {
             }
             return value
         }
-        let usage = V011OfficialThreadUsage(
-            threadScopeSHA256: V011AgentLoopReceipt.sha256(
-                Data(threadID.utf8)
-            ),
+        var usage = V011OfficialThreadUsage(
             estimatedUsageCreditsMicros:
                 try V011OfficialUsageValue
                     .requiredNonnegativeInteger(
@@ -419,6 +412,7 @@ struct V011OfficialTokenUsageSnapshot: Codable, Equatable {
                     ),
             groups: groups
         )
+        usage.sourceThreadIDHash = V011AgentLoopReceipt.sha256(Data(threadID.utf8))
         guard usage.isStructurallyValid else {
             throw V011OfficialUsageError.unsafeEvidence
         }
@@ -446,9 +440,10 @@ struct V011UnifiedResourceItem: Identifiable, Equatable {
 
 extension V011AccessModel {
     func unifiedResourceOverview(
-        maximumSavedRelays: Int? = nil
+        maximumSavedRelays: Int? = nil,
+        currentReadiness: V016AccessReadinessDecision? = nil
     ) -> [V011UnifiedResourceItem] {
-        var items = [officialResourceOverviewItem()]
+        var items = [officialResourceOverviewItem(readiness: currentReadiness)]
         var profiles = savedProfiles
         if case let .relay(providerID)? = liveState?.mode,
            let currentIndex = profiles.firstIndex(where: {
@@ -459,11 +454,17 @@ extension V011AccessModel {
         if let maximumSavedRelays {
             profiles = Array(profiles.prefix(max(0, maximumSavedRelays)))
         }
-        items.append(contentsOf: profiles.map(relayResourceOverviewItem))
+        items.append(contentsOf: profiles.map { relayResourceOverviewItem($0, readiness: currentReadiness) })
         return items
     }
 
-    private func officialResourceOverviewItem()
+    private var currentAccessAvailability: String {
+        V016AccessReadinessRuntimeResolver.resolve(
+            accessModel: self, doctorGuidance: nil, codexInstalled: liveState != nil
+        ).conclusion
+    }
+
+    private func officialResourceOverviewItem(readiness: V016AccessReadinessDecision?)
         -> V011UnifiedResourceItem {
         let isCurrent: Bool
         if case .official? = liveState?.mode {
@@ -472,12 +473,8 @@ extension V011AccessModel {
             isCurrent = false
         }
         let availability: String
-        if isCurrent && isAgentLoopVerified {
-            availability = "真实任务可用"
-        } else if isCurrent && isCurrentConnectionVerified {
-            availability = "基础连接可用；真实任务未验证"
-        } else if isCurrent {
-            availability = "当前已选择；可用性未验证"
+        if isCurrent {
+            availability = readiness?.conclusion ?? currentAccessAvailability
         } else if liveState == nil {
             availability = "当前状态未读取"
         } else {
@@ -539,7 +536,7 @@ extension V011AccessModel {
             isCurrent: isCurrent,
             availability: availability,
             balance: snapshot?.credits?.displayText
-                ?? "已购 credits：未知",
+                ?? "官方 credits 余额：未知",
             planAllowance: allowance?.isEmpty == false
                 ? "套餐 \(snapshot?.planType ?? "未知") · 套餐额度：\(allowance!)"
                 : "套餐额度：未知",
@@ -554,7 +551,7 @@ extension V011AccessModel {
     }
 
     private func relayResourceOverviewItem(
-        _ profile: CodexRelayProfile
+        _ profile: CodexRelayProfile, readiness: V016AccessReadinessDecision?
     ) -> V011UnifiedResourceItem {
         let isCurrent: Bool
         if case let .relay(providerID)? = liveState?.mode {
@@ -581,7 +578,8 @@ extension V011AccessModel {
             kind: .savedRelay,
             name: profile.name,
             isCurrent: isCurrent,
-            availability: savedRelayReadinessStatus(for: profile),
+            availability: isCurrent ? (readiness?.conclusion ?? currentAccessAvailability)
+                : savedRelayReadinessStatus(for: profile),
             balance: "中转余额：未知（无文档化只读接口）",
             planAllowance: "中转套餐额度：未知",
             accountActivity: "中转 token 活动：未知",

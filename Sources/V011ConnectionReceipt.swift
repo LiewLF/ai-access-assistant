@@ -13,6 +13,7 @@ private struct V011ConnectionHealthHistoryPayload:
 
 struct V011ConnectionReceipt: Codable, Equatable, Sendable {
     static let currentSchemaVersion = 1
+    static let validityDuration: TimeInterval = 86_400
 
     let schemaVersion: Int
     let configHash: String
@@ -484,6 +485,19 @@ struct V011ConnectionHealthProbeDiagnosis:
     static func classify(
         _ error: Error
     ) -> V011ConnectionHealthProbeDiagnosis {
+        // LTP-140: the bounded specified-model probe reports typed evidence
+        // instead of a boolean, so its limited outcomes never reach the
+        // generic fallbacks below.
+        if let probeError = error as? RelayConnectionVerifierError {
+            switch probeError {
+            case .missingModel:
+                return diagnosis(.endpointOrModel)
+            case let .probeNotCompleted(reason, _):
+                return diagnosis(reason.healthCategory)
+            case let .probeRemoteFailure(failure, _):
+                return diagnosis(failure.healthCategory)
+            }
+        }
         if let controlError = error as? CodexControlError {
             switch controlError {
             case let .badResponse(status, message):
@@ -527,6 +541,17 @@ struct V011ConnectionHealthProbeDiagnosis:
                 break
             }
         }
+        // LTP-140: a cancelled wait is not a network fault. Callers keep the
+        // original error type (the LTP-130 cancel contract rethrows
+        // `CancellationError` untouched); only the persisted category is
+        // corrected so an actual cancellation is never stored as an
+        // unavailable network or an unknown failure.
+        if error is CancellationError {
+            return diagnosis(.probeCancelled)
+        }
+        if let urlError = error as? URLError, urlError.code == .cancelled {
+            return diagnosis(.probeCancelled)
+        }
         let nsError = error as NSError
         if nsError.domain == NSURLErrorDomain {
             return classify(urlErrorCode: nsError.code)
@@ -538,6 +563,8 @@ struct V011ConnectionHealthProbeDiagnosis:
         urlErrorCode: Int
     ) -> V011ConnectionHealthProbeDiagnosis {
         switch urlErrorCode {
+        case NSURLErrorCancelled:
+            return diagnosis(.probeCancelled)
         case NSURLErrorCannotFindHost,
                 NSURLErrorDNSLookupFailed:
             return diagnosis(.networkNameResolutionFailed)

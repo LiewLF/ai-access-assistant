@@ -269,8 +269,9 @@ struct V011PendingRecoveryCoordinator: @unchecked Sendable {
         }
     }
 
-    func recoveryDisposition() throws
-        -> V011RecoveryDisposition {
+    func recoveryDisposition(
+        onPreview: ((String, FablePreparedRecoveryConfiguration) -> Void)? = nil
+    ) throws -> V011RecoveryDisposition {
         let store = V011SwitchJournalStore(
             rootURL: controlRoot.appendingPathComponent(
                 "SwitchTransactions",
@@ -278,7 +279,7 @@ struct V011PendingRecoveryCoordinator: @unchecked Sendable {
             )
         )
         return try recoveryDecisionService.disposition(
-            pending: store.pending()
+            pending: store.pending(), onPreview: onPreview
         )
     }
 

@@ -195,7 +195,7 @@
     },
     {
       "id": "build-input-lock",
-      "command": "python3 Scripts/build_input_contract.py --verify --root . --lock BuildInputs.lock.json"
+      "command": "python3 Scripts/build_input_contract.py --verify --root . --lock Contracts/Build/BuildInputs.lock.json"
     },
     {
       "id": "release-readiness",

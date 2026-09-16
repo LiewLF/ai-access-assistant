@@ -1,0 +1,95 @@
+--- a/types.go
++++ b/types.go
+@@ -30,19 +30,22 @@
+-	Provider        string       `json:"Provider"`
+-	ExecutorType    string       `json:"ExecutorType"`
+-	Model           string       `json:"Model"`
+-	Alias           string       `json:"Alias"`
+-	APIKey          string       `json:"APIKey"`
+-	AuthID          string       `json:"AuthID"`
+-	AuthIndex       string       `json:"AuthIndex"`
+-	AuthType        string       `json:"AuthType"`
+-	Source          string       `json:"Source"`
+-	ReasoningEffort string       `json:"ReasoningEffort"`
+-	ServiceTier     string       `json:"ServiceTier"`
+-	Generate        bool         `json:"Generate"`
+-	RequestedAt     time.Time    `json:"RequestedAt"`
+-	Latency         int64        `json:"Latency"`
+-	TTFT            int64        `json:"TTFT"`
+-	Failed          bool         `json:"Failed"`
+-	Failure         usageFailure `json:"Failure"`
+-	Detail          usageDetail  `json:"Detail"`
+-	ResponseHeaders http.Header  `json:"ResponseHeaders"`
++	Provider            string       `json:"Provider"`
++	ExecutorType        string       `json:"ExecutorType"`
++	Model               string       `json:"Model"`
++	Alias               string       `json:"Alias"`
++	APIKey              string       `json:"APIKey"`
++	AuthID              string       `json:"AuthID"`
++	AuthIndex           string       `json:"AuthIndex"`
++	AuthType            string       `json:"AuthType"`
++	Source              string       `json:"Source"`
++	ReasoningEffort     string       `json:"ReasoningEffort"`
++	ServiceTier         string       `json:"ServiceTier"`
++	ResponseTokenFields string       `json:"ResponseTokenFields"`
++	ResponseModel       string       `json:"ResponseModel"`
++	ResponseServiceTier string       `json:"ResponseServiceTier"`
++	Generate            bool         `json:"Generate"`
++	RequestedAt         time.Time    `json:"RequestedAt"`
++	Latency             int64        `json:"Latency"`
++	TTFT                int64        `json:"TTFT"`
++	Failed              bool         `json:"Failed"`
++	Failure             usageFailure `json:"Failure"`
++	Detail              usageDetail  `json:"Detail"`
++	ResponseHeaders     http.Header  `json:"ResponseHeaders"`
+@@ -143,0 +147,3 @@
++	ResponseTokenFields    string
++	ResponseModel          string
++	ResponseServiceTier    string
+--- a/app.go
++++ b/app.go
+@@ -287 +287,7 @@
+-	e := event{RequestedAt: requested, ObservedAt: observed, Account: account, Provider: r.Provider, Model: r.Model, Alias: r.Alias, ServiceTier: r.ServiceTier, InputTokens: r.Detail.InputTokens, OutputTokens: r.Detail.OutputTokens, ReasoningTokens: r.Detail.ReasoningTokens, CacheReadTokens: max(r.Detail.CacheReadTokens, r.Detail.CachedTokens), CacheWriteTokens: r.Detail.CacheCreationTokens, TotalTokens: total, CostUSD: cost, Failed: r.Failed, StatusCode: r.Failure.StatusCode, UsedPercent: usedPtr, ResetAt: reset, WindowMinutes: window, SecondaryUsedPercent: secondaryUsedPtr, SecondaryResetAt: secondaryReset, SecondaryWindowMinutes: secondaryWindow, PlanType: header(r.ResponseHeaders, "X-Codex-Plan-Type"), QuotaScope: quotaScopeForUsage(r.Model, r.Alias)}
++	responseModel, responseServiceTier, responseTokenFields := "", "", ""
++	if !r.Failed {
++		responseModel = r.ResponseModel
++		responseTokenFields = r.ResponseTokenFields
++		responseServiceTier = r.ResponseServiceTier
++	}
++	e := event{RequestedAt: requested, ObservedAt: observed, Account: account, Provider: r.Provider, Model: r.Model, Alias: r.Alias, ServiceTier: r.ServiceTier, ResponseTokenFields: responseTokenFields, ResponseModel: responseModel, ResponseServiceTier: responseServiceTier, InputTokens: r.Detail.InputTokens, OutputTokens: r.Detail.OutputTokens, ReasoningTokens: r.Detail.ReasoningTokens, CacheReadTokens: max(r.Detail.CacheReadTokens, r.Detail.CachedTokens), CacheWriteTokens: r.Detail.CacheCreationTokens, TotalTokens: total, CostUSD: cost, Failed: r.Failed, StatusCode: r.Failure.StatusCode, UsedPercent: usedPtr, ResetAt: reset, WindowMinutes: window, SecondaryUsedPercent: secondaryUsedPtr, SecondaryResetAt: secondaryReset, SecondaryWindowMinutes: secondaryWindow, PlanType: header(r.ResponseHeaders, "X-Codex-Plan-Type"), QuotaScope: quotaScopeForUsage(r.Model, r.Alias)}
+--- a/store.go
++++ b/store.go
+@@ -54,0 +55,3 @@
++	response_token_fields TEXT,
++	response_model TEXT,
++	response_service_tier TEXT,
+@@ -146,0 +150,9 @@
++	if err = ensureColumn(s.db, "usage_events", "response_token_fields", "TEXT"); err != nil {
++		return err
++	}
++	if err = ensureColumn(s.db, "usage_events", "response_model", "TEXT"); err != nil {
++		return err
++	}
++	if err = ensureColumn(s.db, "usage_events", "response_service_tier", "TEXT"); err != nil {
++		return err
++	}
+@@ -171 +183 @@
+-	var used, secondaryUsed any
++	var used, secondaryUsed, responseModel, responseServiceTier, responseTokenFields any
+@@ -177,0 +190,9 @@
++	if strings.TrimSpace(e.ResponseTokenFields) != "" {
++		responseTokenFields = e.ResponseTokenFields
++	}
++	if strings.TrimSpace(e.ResponseModel) != "" {
++		responseModel = e.ResponseModel
++	}
++	if strings.TrimSpace(e.ResponseServiceTier) != "" {
++		responseServiceTier = e.ResponseServiceTier
++	}
+@@ -179,2 +200,2 @@
+-	(cycle_id,requested_at,observed_at,account,provider,model,alias,service_tier,input_tokens,output_tokens,reasoning_tokens,cache_read_tokens,cache_write_tokens,total_tokens,cost_usd,failed,status_code,used_percent,reset_at,window_minutes,secondary_used_percent,secondary_reset_at,secondary_window_minutes,plan_type,quota_scope)
+-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
++	(cycle_id,requested_at,observed_at,account,provider,model,alias,service_tier,response_token_fields,response_model,response_service_tier,input_tokens,output_tokens,reasoning_tokens,cache_read_tokens,cache_write_tokens,total_tokens,cost_usd,failed,status_code,used_percent,reset_at,window_minutes,secondary_used_percent,secondary_reset_at,secondary_window_minutes,plan_type,quota_scope)
++VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+@@ -181,0 +203 @@
++		responseTokenFields, responseModel, responseServiceTier,

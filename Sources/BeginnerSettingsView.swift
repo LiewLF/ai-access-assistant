@@ -6,17 +6,16 @@ struct BeginnerSettingsView: View {
     @ObservedObject var model: ConfigWorkspaceModel
     @ObservedObject var accessModel: V011AccessModel
     @ObservedObject var historyModel: V011HistoryModel
-    let initialSection: BeginnerSettingsSection
+    @Binding var section: BeginnerSettingsSection
+    @Binding var continuityImportWorking: Bool
+    @ObservedObject var continuityDraft: BeginnerContinuityViewState
+    let openSettingsSection: (BeginnerSettingsSection) -> Void
     let onUseRelayEntry:
         (ProviderCatalogEntryV2) -> Void
     let onConfigureCustomRelay: () -> Void
     let openAccessSection: (BeginnerAccessSection) -> Void
 
-    @Environment(\.dismiss) private var dismiss
-    @State private var section =
-        BeginnerSettingsSection.software
     @State private var publicDistributionExportStatus: String?
-    @State private var continuityImportWorking = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,10 +23,7 @@ struct BeginnerSettingsView: View {
                 Text("设置与诊断")
                     .font(.title2.bold())
                 Spacer()
-                Button("完成") {
-                    dismiss()
-                }
-                .disabled(continuityImportWorking)
+
             }
             .padding(18)
             Divider()
@@ -37,10 +33,10 @@ struct BeginnerSettingsView: View {
                     spacing: 5
                 ) {
                     ForEach(
-                        BeginnerSettingsSection.allCases
+                        BeginnerSettingsSection.allCases.filter { $0 != .capabilities }
                     ) { item in
                         Button {
-                            section = item
+                            openSettingsSection(item)
                         } label: {
                             Label(
                                 item.rawValue,
@@ -91,10 +87,7 @@ struct BeginnerSettingsView: View {
                             accessModel: accessModel
                         )
                     case .capabilities:
-                        BeginnerExtensionCapabilitiesView(
-                            model: model,
-                            accessModel: accessModel
-                        )
+                        EmptyView() // Legacy routes are redirected by AppShellState.
                     case .relayDirectory:
                         RelayDirectoryView(
                             onUseEntry:
@@ -107,18 +100,19 @@ struct BeginnerSettingsView: View {
                             accessModel: accessModel,
                             historyModel: historyModel,
                             isImportWorking:
-                                $continuityImportWorking
+                                $continuityImportWorking,
+                            draft: continuityDraft
                         )
                     case .diagnostics:
                         BeginnerDiagnosticsView(
                             model: model,
                             accessModel: accessModel,
-                            openSettingsSection: { section = $0 },
+                            openSettingsSection: openSettingsSection,
                             openAccessSection: openAccessSection
                         )
                     case .guide:
                         BeginnerGuideView(
-                            openSettingsSection: { section = $0 },
+                            openSettingsSection: openSettingsSection,
                             openAccessSection: openAccessSection
                         )
                     case .about:
@@ -127,10 +121,6 @@ struct BeginnerSettingsView: View {
                 }
             }
         }
-        .onAppear {
-            section = initialSection
-        }
-        .interactiveDismissDisabled(continuityImportWorking)
     }
 
     private var aboutView: some View {

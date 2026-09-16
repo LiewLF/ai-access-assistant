@@ -44,6 +44,13 @@ final class V011SavedRelayController {
     private weak var delegate:
         (any V011SavedRelayControllerDelegate)?
     private let actionService: V011SavedRelayActionService
+    private var additionTask: Task<Void, Never>?
+
+    var isAdding: Bool { additionTask != nil }
+
+    func cancelAddition() {
+        additionTask?.cancel()
+    }
 
     init(
         dependencies: V011AccessDependencies,
@@ -151,12 +158,13 @@ final class V011SavedRelayController {
         guard delegate.allowsSavedRelayMutationStart else { return }
         delegate.savedRelayAddDidBegin()
         let service = actionService
-        Task {
+        additionTask = Task {
             let outcome = await service.add(
                 draft: draft,
                 apiKey: key
             )
             delegate.savedRelayAddDidReceive(outcome)
+            additionTask = nil
             delegate.savedRelayMutationDidBecomeIdle()
         }
     }

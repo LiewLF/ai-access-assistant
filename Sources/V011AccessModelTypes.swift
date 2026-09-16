@@ -43,7 +43,7 @@ enum V011AccessError: LocalizedError, Equatable {
         case .currentRelaySnapshotMismatch:
             return "当前中转含有无法无损保存的扩展能力；本次未接管，Codex设置未改变"
         case .duplicateProvider:
-            return "已有同名但地址不同的中转，请换一个名称后再添加"
+            return "这个中转已经保存，请到“切换模式”修改已有中转；本次不会覆盖原配置或密钥"
         case .invalidCapabilityProfile:
             return "能力配置无效；请核对速度档、上下文和自动压缩阈值"
         }

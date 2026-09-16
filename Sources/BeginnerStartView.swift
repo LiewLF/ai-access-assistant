@@ -28,21 +28,12 @@ struct BeginnerStartView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("今天还能用多少")
+                    Text("当前工作状态")
                         .font(.title.weight(.semibold))
-                    Text(
-                        "先看官方套餐、本周剩余与满额估算，再决定今天怎么用。"
-                    )
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    Text("先确认当前接入与下一步，需要时再查看资源明细。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
-
-                V011UnifiedResourceOverviewCard(
-                    accessModel: accessModel,
-                    historyModel: historyModel,
-                    usageModel: usageModel,
-                    onFailureAction: performOfficialUsageAction
-                )
 
                 if firstUseGuidance.isVisible
                     && !unifiedReadinessOverridesFirstUse {
@@ -50,6 +41,14 @@ struct BeginnerStartView: View {
                 } else {
                     unifiedReadinessCard
                 }
+
+                V011UnifiedResourceOverviewCard(
+                    accessModel: accessModel,
+                    historyModel: historyModel,
+                    usageModel: usageModel,
+                    onFailureAction: performOfficialUsageAction,
+                    currentReadiness: unifiedReadinessDecision
+                )
 
                 homeOutcomeActions
 
@@ -101,16 +100,18 @@ struct BeginnerStartView: View {
         }
         .onAppear {
             accessModel.preparePresentation()
-            model.refreshConfigurationHealth(
-                using: accessModel
-            )
         }
-        .onChange(of: accessModel.isRefreshing) {
-            wasRefreshing, isRefreshing in
-            guard wasRefreshing, !isRefreshing else { return }
-            model.refreshConfigurationHealth(
-                using: accessModel
-            )
+        .onChange(of: accessModel.agentLoopCompletedUsage?.id) {
+            _, _ in
+            guard let turn = accessModel.agentLoopCompletedUsage else {
+                return
+            }
+            usageModel.stageAgentLoopUsage(turn)
+            if turn.providerID.caseInsensitiveCompare("openai")
+                == .orderedSame,
+               accessModel.canRefreshOfficialUsage {
+                accessModel.refreshOfficialUsage(threadID: turn.sourceThreadID)
+            }
         }
         .confirmationDialog(
             "确认第1步基础连接？",
@@ -144,7 +145,8 @@ struct BeginnerStartView: View {
         }
         .sheet(item: $selectedRepairPreview) { preview in
             BeginnerRecoveryRepairPreviewView(
-                preview: preview
+                preview: preview,
+                canConfirm: accessModel.canRunDeterministicRepair
             ) { fingerprint in
                 accessModel.runDeterministicRepair(
                     userConsented: true,
@@ -180,17 +182,38 @@ struct BeginnerStartView: View {
                 unifiedReadinessDecision.primaryAction else {
             return false
         }
+        if action == .refreshState { return true }
         if case .performDoctorAction = action { return true }
         return false
     }
 
     private var unifiedReadinessCard: some View {
-        BeginnerUnifiedReadinessCard(
-            decision: unifiedReadinessDecision,
-            accessibilityIdentifier: "build152.home.readiness",
-            actionEnabled: unifiedReadinessActionEnabled,
-            perform: performUnifiedReadinessAction
-        )
+        VStack(alignment: .leading, spacing: 10) {
+            BeginnerUnifiedReadinessCard(
+                decision: unifiedReadinessDecision,
+                accessibilityIdentifier: "build152.home.readiness",
+                actionEnabled: unifiedReadinessActionEnabled,
+                perform: performUnifiedReadinessAction
+            )
+            if offersOfficialRealTaskReverification {
+                Button("重新验证官方真实任务") {
+                    confirmsRealAgentLoop = true
+                }
+                .buttonStyle(.bordered)
+                .disabled(!accessModel.canVerifyRealAgentLoop)
+                .accessibilityHint(
+                    "重新运行隔离真实任务，用于更新当前官方接入证据。"
+                )
+                .accessibilityIdentifier(
+                    "build188.home.reverify-official-real-task"
+                )
+            }
+        }
+    }
+
+    private var offersOfficialRealTaskReverification: Bool {
+        unifiedReadinessDecision.route == .official
+            && unifiedReadinessDecision.code == .realTaskReady
     }
 
     private var unifiedReadinessActionEnabled: Bool {
@@ -199,6 +222,8 @@ struct BeginnerStartView: View {
             return false
         }
         switch action {
+        case .keepCurrentConfiguration:
+            return accessModel.canKeepCurrentConfigurationAndEndPendingSwitch
         case .checkBasicConnection:
             return accessModel.canCheckCurrentConnection
         case .verifyRealTask:
@@ -276,6 +301,19 @@ struct BeginnerStartView: View {
                     .controlSize(.small)
                     .accessibilityLabel(firstUseGuidance.title)
             }
+            if firstUseGuidance.canDeferVerification {
+                Button("打开 Codex，稍后验证") {
+                    guard accessModel.canCheckCurrentConnection else { return }
+                    codexLaunchError = BeginnerCodexLauncher.openInstalled()
+                }
+                .buttonStyle(.borderless)
+                .disabled(!accessModel.canCheckCurrentConnection)
+                .accessibilityIdentifier("first-use.defer-verification")
+                Text("只打开 Codex；助手不运行检测、不修改接入，当前证据仍保持待验证。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -337,6 +375,8 @@ struct BeginnerStartView: View {
         case .previewRecovery:
             selectedRepairPreview =
                 accessModel.recoveryRepairPreview
+        case .keepCurrentConfiguration:
+            accessModel.keepCurrentConfigurationAndEndPendingSwitch()
         case .openDiagnostics:
             onOpenDiagnostics()
         case let .resolveFailure(failureAction):
@@ -484,7 +524,6 @@ struct BeginnerStartView: View {
                 .checkNetwork,
                 .reviewToolPermission,
                 .reviewResponsesCompatibility,
-                .stopOtherConfigurationTools,
                 .openAdvancedDiagnostics:
             onOpenDiagnostics()
         }
@@ -511,7 +550,6 @@ struct BeginnerStartView: View {
                 .checkNetwork,
                 .reviewToolPermission,
                 .reviewResponsesCompatibility,
-                .stopOtherConfigurationTools,
                 .openAdvancedDiagnostics:
             onOpenDiagnostics()
         }
@@ -719,20 +757,6 @@ struct BeginnerStartView: View {
             .orange.opacity(0.08),
             in: RoundedRectangle(cornerRadius: 14)
         )
-    }
-
-    private var capabilityVerdict:
-        ConfigurationCapabilityVerdict {
-        model.configurationHealth?
-            .capabilitySummary.verdict ?? .unverified
-    }
-
-    private var capabilityVerdictColor: Color {
-        switch capabilityVerdict {
-        case .consistent: return .green
-        case .different: return .orange
-        case .unverified: return .secondary
-        }
     }
 
     private func actionCard(

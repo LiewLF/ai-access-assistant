@@ -14,7 +14,8 @@ struct V011RecoveryDecisionService {
     let keyProvider: () throws -> Data
 
     func disposition(
-        pending: [V011SwitchJournal]
+        pending: [V011SwitchJournal],
+        onPreview: ((String, FablePreparedRecoveryConfiguration) -> Void)? = nil
     ) throws -> V011RecoveryDisposition {
         guard !pending.isEmpty else { return .none }
         guard pending.count == 1 else {
@@ -42,10 +43,11 @@ struct V011RecoveryDecisionService {
                 return .decisionRequired
             }
             do {
-                _ = try recoverySnapshotService.prepare(
+                let recovery = try recoverySnapshotService.prepare(
                     journal: journal,
                     vault: vault
                 )
+                onPreview?(journal.id, recovery.configuration.prepared)
             } catch FableSwitchError.managedRecoveryConflict {
                 return .decisionRequired
             } catch V011SwitchError

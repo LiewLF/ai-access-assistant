@@ -65,6 +65,12 @@ struct V011RelayUpdateService: @unchecked Sendable {
         var storedReplacement = false
         var shouldRefresh = false
         do {
+            if let issue = V011RelayEndpointPolicy.draftIssue(
+                targetProfile.baseURL,
+                localGatewayConfirmed: targetProfile.localGatewayConfirmed == true
+            ) {
+                throw V011RelayPreflightFailure(detail: issue)
+            }
             if let replacementSecret {
                 previousSecret = try dependencies.credentialStore.secret(
                     reference: sourceProfile.v011CredentialReference

@@ -85,7 +85,8 @@ enum V011OptionalProviderProbeService {
         _ kind: ProviderCapabilityProbeKind,
         profile: CodexRelayProfile,
         apiKey: String,
-        userConsented: Bool
+        userConsented: Bool,
+        session: URLSession? = nil
     ) async throws -> [V011ProviderCapabilityProbeObservation] {
         guard profile.wireProtocol == .responses,
               CodexPlusPlusAdapter.isAllowedBaseURL(
@@ -136,11 +137,23 @@ enum V011OptionalProviderProbeService {
             )
         let response: (Data, URLResponse)
         do {
-            response = try await RelaySecureHTTPClient.data(
-                for: request,
-                source: .userTyped,
-                confirmedLocalGateway:
-                    profile.localGatewayConfirmed == true
+            if let session {
+                response = try await BoundedHTTPResponse.data(
+                    for: request, session: session, maximumBytes: 2_000_000
+                )
+            } else {
+                response = try await RelaySecureHTTPClient.data(
+                    for: request,
+                    source: .userTyped,
+                    confirmedLocalGateway: profile.localGatewayConfirmed == true,
+                    maximumBytes: 2_000_000
+                )
+            }
+        } catch BoundedHTTPResponseError.responseTooLarge {
+            return optionalProbeFailureObservations(
+                kind,
+                capability: capability,
+                accepted: "response-too-large"
             )
         } catch {
             return optionalProbeFailureObservations(
@@ -150,13 +163,6 @@ enum V011OptionalProviderProbeService {
             )
         }
         let (data, urlResponse) = response
-        guard data.count <= 2_000_000 else {
-            return optionalProbeFailureObservations(
-                kind,
-                capability: capability,
-                accepted: "response-too-large"
-            )
-        }
         guard let http = urlResponse as? HTTPURLResponse else {
             return optionalProbeFailureObservations(
                 kind,

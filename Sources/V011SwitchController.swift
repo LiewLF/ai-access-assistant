@@ -7,6 +7,7 @@ protocol V011SwitchControllerDelegate: AnyObject {
     var switchControllerUsesRelayAccess: Bool { get }
     var hasTrustedOfficialRootOverlay: Bool { get }
     var hasPendingRecovery: Bool { get }
+    var errorMessage: String? { get }
     var needsCurrentRelayAdoption: Bool { get }
 
     func switchControllerPendingRecoveryBlockMessage(
@@ -22,7 +23,7 @@ protocol V011SwitchControllerDelegate: AnyObject {
         _ outcome: V011SwitchActionOutcome
     )
     func switchControllerDidBecomeIdle()
-    func switchControllerRequestsRefresh()
+    func switchControllerRequestsRefresh(completion: (() -> Void)?)
 }
 
 /// Owns switch entry guards, transaction task launch, progress, completion
@@ -110,10 +111,16 @@ final class V011SwitchController {
             delegate.switchControllerDidBecomeIdle()
             switch outcome {
             case .completed:
-                delegate.switchControllerRequestsRefresh()
+                delegate.switchControllerRequestsRefresh(completion: nil)
             case let .failed(failure):
                 if failure.shouldRefresh {
-                    delegate.switchControllerRequestsRefresh()
+                    delegate.switchControllerRequestsRefresh { [weak delegate] in
+                        guard let delegate, !delegate.hasPendingRecovery,
+                              delegate.errorMessage == nil else { return }
+                        // Refresh current data first; a successful read does not
+                        // turn the failed cutover into a successful operation.
+                        delegate.switchControllerDidReceive(.failed(failure))
+                    }
                 }
             }
         }

@@ -152,22 +152,22 @@ final class V011HistoryModel:
     var isWorking: Bool {
         operation != nil || recoveryCleanupController.isRunning
     }
+    var recentRows: [V011SessionRow] { V013UsageWindowHistoryReader.orderByRecentActivity(rows) }
 
-    static func orderByRecentActivity(
-        _ candidates: [V011SessionRow]
-    ) -> [V011SessionRow] {
-        candidates.sorted { lhs, rhs in
-            let lhsDate = lhs.updatedAt ?? .distantPast
-            let rhsDate = rhs.updatedAt ?? .distantPast
-            if lhsDate != rhsDate {
-                return lhsDate > rhsDate
-            }
-            return lhs.id < rhs.id
+    func readUsageWindowHistory(
+        windowStart: Date
+    ) async throws -> V013UsageWindowHistoryResult {
+        let value = dependencies
+        return try await V013UsageWindowHistoryReader().read(
+            windowStart: windowStart
+        ) { limit, offset in
+            try await value.sessionCore.listAll(
+                codexHome: value.codexHome,
+                limit: limit,
+                offset: offset,
+                provider: nil
+            )
         }
-    }
-
-    var recentRows: [V011SessionRow] {
-        Self.orderByRecentActivity(rows)
     }
 
     var recoveryNeedsAttention: Bool {

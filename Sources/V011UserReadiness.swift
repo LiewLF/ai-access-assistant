@@ -72,7 +72,7 @@ struct V011OfficialUsageWindow: Codable, Equatable, Identifiable {
 }
 
 struct V011OfficialUsageSnapshot: Codable, Equatable {
-    static let schemaVersion = 2
+    static let schemaVersion = 4
     static let freshnessLifetime: TimeInterval = 30 * 60
 
     let version: Int
@@ -80,11 +80,10 @@ struct V011OfficialUsageSnapshot: Codable, Equatable {
     let freshUntil: Date
     let accountType: String
     let planType: String
-    let accountScopeSHA256: String
+    let accountScopeSHA256: String?
     let codexAppVersion: String
     let codexAppBuild: String
     let codexCLIVersion: String
-    let codexCLISHA256: String
     let windows: [V011OfficialUsageWindow]
     let credits: V011OfficialCreditsSnapshot?
     let individualLimit: V011OfficialSpendControlSnapshot?
@@ -98,11 +97,10 @@ struct V011OfficialUsageSnapshot: Codable, Equatable {
         freshUntil: Date,
         accountType: String,
         planType: String,
-        accountScopeSHA256: String,
+        accountScopeSHA256: String?,
         codexAppVersion: String,
         codexAppBuild: String,
         codexCLIVersion: String,
-        codexCLISHA256: String,
         windows: [V011OfficialUsageWindow],
         credits: V011OfficialCreditsSnapshot? = nil,
         individualLimit: V011OfficialSpendControlSnapshot? = nil,
@@ -119,7 +117,6 @@ struct V011OfficialUsageSnapshot: Codable, Equatable {
         self.codexAppVersion = codexAppVersion
         self.codexAppBuild = codexAppBuild
         self.codexCLIVersion = codexCLIVersion
-        self.codexCLISHA256 = codexCLISHA256
         self.windows = windows
         self.credits = credits
         self.individualLimit = individualLimit
@@ -133,18 +130,17 @@ struct V011OfficialUsageSnapshot: Codable, Equatable {
     }
 
     var isStructurallyValid: Bool {
-        (version == 1 || version == Self.schemaVersion)
+        version == Self.schemaVersion
             && observedAt <= freshUntil
             && freshUntil.timeIntervalSince(observedAt)
                 <= Self.freshnessLifetime + 1
             && accountType == "chatgpt"
             && !planType.isEmpty
             && planType.utf8.count <= 80
-            && Self.isSHA256(accountScopeSHA256)
+            && accountScopeSHA256.map(Self.isSHA256) != false
             && !codexAppVersion.isEmpty
             && !codexAppBuild.isEmpty
             && !codexCLIVersion.isEmpty
-            && Self.isSHA256(codexCLISHA256)
             && !windows.isEmpty
             && windows.count <= 4
             && windows.allSatisfy(\.isStructurallyValid)
@@ -237,7 +233,11 @@ struct V011CodexAppServerExchange: @unchecked Sendable {
 
         let process = Process()
         process.executableURL = executable
-        process.arguments = ["app-server", "--stdio"]
+        // account/read reflects the selected provider. CPA deliberately uses
+        // requires_openai_auth=false, so inheriting it hides the ChatGPT account.
+        // Select the built-in provider only for this read-only RPC process;
+        // the user's configuration and model-request route stay untouched.
+        process.arguments = ["-c", #"model_provider="openai""#, "app-server", "--stdio"]
         process.environment = FableCommandEnvironmentPolicy.sanitized(
             base: currentEnvironment,
             overrides: [:]
@@ -332,20 +332,16 @@ struct V011LiveOfficialUsageReader:
     V011OfficialUsageReading, @unchecked Sendable {
     let versionDiscovery: any FableCodexVersionDiscovering
     let exchange: V011CodexAppServerExchange
-    let binaryHasher: any CodexBinaryHashing
     let now: @Sendable () -> Date
 
     init(
         versionDiscovery: any FableCodexVersionDiscovering,
         exchange: V011CodexAppServerExchange =
             V011CodexAppServerExchange(),
-        binaryHasher: any CodexBinaryHashing =
-            CodexBinarySHA256Hasher(),
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.versionDiscovery = versionDiscovery
         self.exchange = exchange
-        self.binaryHasher = binaryHasher
         self.now = now
     }
 
@@ -439,9 +435,6 @@ struct V011LiveOfficialUsageReader:
         let snapshot = try Self.parse(
             responseData,
             installation: installation,
-            cliSHA256: try binaryHasher.sha256(
-                of: installation.cliURL
-            ),
             observedAt: now(),
             requestedThreadID: threadID
         )
@@ -454,7 +447,6 @@ struct V011LiveOfficialUsageReader:
     static func parse(
         _ responseData: Data,
         installation: FableCodexInstallation,
-        cliSHA256: String,
         observedAt: Date,
         requestedThreadID: String? = nil
     ) throws -> V011OfficialUsageSnapshot {
@@ -469,16 +461,34 @@ struct V011LiveOfficialUsageReader:
                         return (id, object)
                     }
         )
-        guard responses[1]?["error"] == nil,
-              responses[2]?["error"] == nil,
-              responses[3]?["error"] == nil,
-              let accountResult = responses[2]?["result"]
+        for id in [1, 2, 3] {
+            guard let response = responses[id] else {
+                throw V011OfficialUsageError.protocolMismatch
+            }
+            if let error = response["error"], !(error is NSNull) {
+                guard let error = error as? [String: Any],
+                      error["code"] is Int, error["message"] is String else {
+                    throw V011OfficialUsageError.protocolMismatch
+                }
+                throw V011OfficialUsageError.appServerUnavailable
+            }
+            guard let result = response["result"] as? [String: Any] else {
+                throw V011OfficialUsageError.protocolMismatch
+            }
+            // Only an explicit account state establishes missing ChatGPT auth.
+            // An RPC failure or malformed response does not establish logout.
+            if id == 2, result["account"] is NSNull
+                || (result["account"] as? [String: Any])?["type"] as? String == "apiKey" {
+                throw V011OfficialUsageError.chatGPTLoginRequired
+            }
+        }
+        guard let accountResult = responses[2]?["result"]
                 as? [String: Any],
               let account = accountResult["account"]
                 as? [String: Any],
               let accountType = account["type"] as? String,
               accountType == "chatgpt" else {
-            throw V011OfficialUsageError.chatGPTLoginRequired
+            throw V011OfficialUsageError.protocolMismatch
         }
         let email = (account["email"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -557,8 +567,6 @@ struct V011LiveOfficialUsageReader:
         } else {
             tokenUsage = nil
         }
-        let scope = [accountType, email, planType]
-            .joined(separator: "|")
         return V011OfficialUsageSnapshot(
             version: V011OfficialUsageSnapshot.schemaVersion,
             observedAt: observedAt,
@@ -567,13 +575,14 @@ struct V011LiveOfficialUsageReader:
             ),
             accountType: accountType,
             planType: planType,
-            accountScopeSHA256: V011AgentLoopReceipt.sha256(
-                Data(scope.utf8)
+            accountScopeSHA256: accountScopeSHA256(
+                accountType: accountType,
+                email: email,
+                planType: planType
             ),
             codexAppVersion: installation.identity.appVersion,
             codexAppBuild: installation.identity.appBuild,
             codexCLIVersion: installation.identity.cliVersion,
-            codexCLISHA256: cliSHA256,
             windows: windows,
             credits: credits,
             individualLimit: individualLimit,
@@ -584,6 +593,22 @@ struct V011LiveOfficialUsageReader:
             tokenUsage: tokenUsage
         )
     }
+
+    /// Build182 R4：email 缺失或空值时返回 nil，使 scope 不可作为
+    /// 可复用身份；仅用于派生摘要，原始 email 不存储、不显示。
+    static func accountScopeSHA256(
+        accountType: String,
+        email: String,
+        planType: String
+    ) -> String? {
+        guard !email.isEmpty else { return nil }
+        return V011AgentLoopReceipt.sha256(
+            Data(
+                [accountType, email, planType]
+                    .joined(separator: "|").utf8
+            )
+        )
+    }
 }
 
 struct V011OfficialUsageSnapshotStore {
@@ -591,16 +616,15 @@ struct V011OfficialUsageSnapshotStore {
 
     let fileURL: URL
     private let fileManager: FileManager
-    private let writer: FableAtomicConfigWriter
+    private let writer: V011ReceiptFileWriter
 
     init(
         fileURL: URL,
-        fileManager: FileManager = .default,
-        writer: FableAtomicConfigWriter = FableAtomicConfigWriter()
+        fileManager: FileManager = .default
     ) {
         self.fileURL = fileURL.standardizedFileURL
         self.fileManager = fileManager
-        self.writer = writer
+        writer = V011ReceiptFileWriter(fileManager: fileManager)
     }
 
     func load() throws -> V011OfficialUsageSnapshot? {
@@ -647,22 +671,17 @@ struct V011OfficialUsageSnapshotStore {
         guard data.count <= Self.maximumBytes else {
             throw V011OfficialUsageError.unsafeEvidence
         }
-        try writer.write(
-            data,
-            to: fileURL,
-            expectedCurrentHash:
-                SessionSyncFileSafety.hashIfPresent(fileURL)
-        )
+        try writer.write(data, to: fileURL)
     }
 }
 
 struct V011SavedRelayReadinessReceipt:
     Codable, Equatable, Identifiable {
-    static let schemaVersion = 1
+    static let schemaVersion = 2
 
     let version: Int
     let profileID: String
-    let profileFingerprint: String
+    let routeIdentity: V011AgentLoopRouteIdentity
     let agentLoop: V011AgentLoopReceipt
 
     var id: String { profileID }
@@ -673,20 +692,9 @@ struct V011SavedRelayReadinessReceipt:
         version == Self.schemaVersion
             && !profileID.isEmpty
             && profileID.utf8.count <= 512
-            && profileFingerprint.count == 64
-            && profileFingerprint.allSatisfy {
-                $0.isHexDigit && !$0.isUppercase
-            }
+            && routeIdentity.isStructurallyValid
+            && routeIdentity == agentLoop.routeIdentity
             && agentLoop.isStructurallyValid
-    }
-
-    static func fingerprint(
-        _ profile: CodexRelayProfile
-    ) -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let data = (try? encoder.encode(profile)) ?? Data()
-        return V011AgentLoopReceipt.sha256(data)
     }
 }
 
@@ -717,7 +725,6 @@ struct V011LiveSavedRelayReadinessVerifier:
     let codexHome: URL
     let versionDiscovery: any FableCodexVersionDiscovering
     let commandRunner: any FableCommandRunning
-    let binaryHasher: any CodexBinaryHashing
     let fileManager: FileManager
     let now: @Sendable () -> Date
     let temporaryRoot: URL
@@ -727,8 +734,6 @@ struct V011LiveSavedRelayReadinessVerifier:
         versionDiscovery: any FableCodexVersionDiscovering,
         commandRunner: any FableCommandRunning =
             FableSystemCommandRunner(),
-        binaryHasher: any CodexBinaryHashing =
-            CodexBinarySHA256Hasher(),
         fileManager: FileManager = .default,
         now: @escaping @Sendable () -> Date = { Date() },
         temporaryRoot: URL = FileManager.default.temporaryDirectory
@@ -736,7 +741,6 @@ struct V011LiveSavedRelayReadinessVerifier:
         self.codexHome = codexHome.standardizedFileURL
         self.versionDiscovery = versionDiscovery
         self.commandRunner = commandRunner
-        self.binaryHasher = binaryHasher
         self.fileManager = fileManager
         self.now = now
         self.temporaryRoot = temporaryRoot.standardizedFileURL
@@ -755,8 +759,8 @@ struct V011LiveSavedRelayReadinessVerifier:
             isDirectory: false
         )
         let liveConfigData = try boundedConfig(liveConfigURL)
-        let liveConfigHash = V011AgentLoopReceipt.sha256(
-            liveConfigData
+        let initialRouteIdentity = try V011AgentLoopRouteIdentity(
+            configurationData: liveConfigData
         )
         let original = String(
             decoding: liveConfigData,
@@ -768,6 +772,16 @@ struct V011LiveSavedRelayReadinessVerifier:
             secret: secret
         )
         let proposedData = Data(proposed.utf8)
+        let proposedRouteIdentity = try V011AgentLoopRouteIdentity(
+            configurationData: proposedData
+        )
+        guard let profileRouteIdentity =
+                V011AgentLoopRouteIdentity(profile: profile),
+              proposedRouteIdentity == profileRouteIdentity,
+              proposedRouteIdentity.modelID != nil else {
+            throw V011AgentLoopVerificationError
+                .unsafeConfiguration
+        }
         let sandboxRoot = temporaryRoot.appendingPathComponent(
             "ai-access-saved-relay-\(UUID().uuidString)",
             isDirectory: true
@@ -807,23 +821,22 @@ struct V011LiveSavedRelayReadinessVerifier:
                 codexHome: isolatedCodexHome,
                 versionDiscovery: versionDiscovery,
                 commandRunner: commandRunner,
-                binaryHasher: binaryHasher,
                 fileManager: fileManager,
                 now: now,
                 temporaryRoot: sandboxRoot
             ).verify(
                 userConsented: true,
-                expectedProviderID: profile.v011ProviderID,
-                expectedConfigHash:
-                    V011AgentLoopReceipt.sha256(proposedData)
+                expectedRouteIdentity: proposedRouteIdentity
             )
         } catch {
             probeError = error
         }
         let currentConfig = try boundedConfig(liveConfigURL)
-        let configurationChanged =
-            V011AgentLoopReceipt.sha256(currentConfig)
-                != liveConfigHash
+        let configurationChanged = (
+            try? V011AgentLoopRouteIdentity(
+                configurationData: currentConfig
+            )
+        ) != initialRouteIdentity
         do {
             if fileManager.fileExists(atPath: sandboxRoot.path) {
                 try fileManager.removeItem(at: sandboxRoot)
@@ -841,8 +854,7 @@ struct V011LiveSavedRelayReadinessVerifier:
         let receipt = V011SavedRelayReadinessReceipt(
             version: V011SavedRelayReadinessReceipt.schemaVersion,
             profileID: profile.id,
-            profileFingerprint:
-                V011SavedRelayReadinessReceipt.fingerprint(profile),
+            routeIdentity: profileRouteIdentity,
             agentLoop: probeResult.receipt
         )
         guard receipt.isStructurallyValid else {
@@ -858,28 +870,21 @@ struct V011LiveSavedRelayReadinessVerifier:
     ) -> Bool {
         guard receipt.isStructurallyValid,
               receipt.profileID == profile.id,
-              receipt.profileFingerprint
-                == V011SavedRelayReadinessReceipt
-                    .fingerprint(profile),
+              let profileRouteIdentity =
+                V011AgentLoopRouteIdentity(profile: profile),
+              receipt.routeIdentity == profileRouteIdentity,
               receipt.agentLoop.outcome == .passed,
               receipt.expiresAt > now,
-              receipt.agentLoop.providerID
-                == profile.v011ProviderID,
-              receipt.agentLoop.modelID
-                == profile.defaultModel,
               let installation = try? versionDiscovery.discover(),
-              receipt.agentLoop.codexAppVersion
-                == installation.identity.appVersion,
-              receipt.agentLoop.codexAppBuild
-                == installation.identity.appBuild,
-              receipt.agentLoop.codexCLIVersion
-                == installation.identity.cliVersion,
-              let hash = try? binaryHasher.sha256(
-                of: installation.cliURL
-              ) else {
+              let runtimeIdentity =
+                V011AgentLoopRuntimeIdentity(
+                    installation: installation
+                ),
+              receipt.agentLoop.runtimeIdentity
+                == runtimeIdentity else {
             return false
         }
-        return hash == receipt.agentLoop.codexCLISHA256
+        return true
     }
 
     private func boundedConfig(_ url: URL) throws -> Data {
@@ -913,16 +918,15 @@ struct V011SavedRelayReadinessStore {
 
     let fileURL: URL
     private let fileManager: FileManager
-    private let writer: FableAtomicConfigWriter
+    private let writer: V011ReceiptFileWriter
 
     init(
         fileURL: URL,
-        fileManager: FileManager = .default,
-        writer: FableAtomicConfigWriter = FableAtomicConfigWriter()
+        fileManager: FileManager = .default
     ) {
         self.fileURL = fileURL.standardizedFileURL
         self.fileManager = fileManager
-        self.writer = writer
+        writer = V011ReceiptFileWriter(fileManager: fileManager)
     }
 
     func load() throws -> [String: V011SavedRelayReadinessReceipt] {
@@ -944,7 +948,8 @@ struct V011SavedRelayReadinessStore {
             V011SavedRelayReadinessPayload.self,
             from: Data(contentsOf: fileURL)
         )
-        guard payload.version == 1,
+        guard payload.version
+                == V011SavedRelayReadinessReceipt.schemaVersion,
               payload.receipts.count <= 256,
               payload.receipts.allSatisfy({ key, receipt in
                   key == receipt.profileID
@@ -978,18 +983,14 @@ struct V011SavedRelayReadinessStore {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(
             V011SavedRelayReadinessPayload(
-                version: 1,
+                version:
+                    V011SavedRelayReadinessReceipt.schemaVersion,
                 receipts: receipts
             )
         )
         guard data.count <= Self.maximumBytes else {
             throw V011OfficialUsageError.unsafeEvidence
         }
-        try writer.write(
-            data,
-            to: fileURL,
-            expectedCurrentHash:
-                SessionSyncFileSafety.hashIfPresent(fileURL)
-        )
+        try writer.write(data, to: fileURL)
     }
 }

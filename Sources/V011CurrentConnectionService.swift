@@ -6,10 +6,10 @@ struct V011CurrentConnectionCheckResult: @unchecked Sendable {
     let endpointHost: String?
     let runtimeFreshness: V011RuntimeFreshness
     let receiptMatches: Bool
-    let sessionIsCurrent: Bool
-
     var isVerified: Bool {
-        receiptMatches && sessionIsCurrent
+        // The probe verifies this connection. A provider index covering old
+        // tasks cannot establish the route of the currently running task.
+        receiptMatches
     }
 }
 
@@ -77,7 +77,9 @@ struct V011CurrentConnectionService: @unchecked Sendable {
             endpointHost: endpointHost,
             verifiedAt: result.verifiedAt,
             sessionProviderCheck: result.sessionProviderCheck,
-            expiresAt: result.verifiedAt.addingTimeInterval(86_400)
+            expiresAt: result.verifiedAt.addingTimeInterval(
+                V011ConnectionReceipt.validityDuration
+            )
         )
         try connectionHealthService.receiptStore.commit(receipt) {
             try dependencies.afterConnectionReceiptSave()
@@ -97,9 +99,7 @@ struct V011CurrentConnectionService: @unchecked Sendable {
             receipt: receipt,
             endpointHost: endpointHost,
             runtimeFreshness: freshness,
-            receiptMatches: receiptMatches,
-            sessionIsCurrent:
-                result.sessionProviderCheck == .synchronized
+            receiptMatches: receiptMatches
         )
     }
 }

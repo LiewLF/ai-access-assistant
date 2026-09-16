@@ -102,6 +102,10 @@ struct V011SwitchJournalStore {
             .sorted { $0.startedAt < $1.startedAt }
     }
 
+    func pendingReadOnly() throws -> [V011SwitchJournal] {
+        try allJournals(readOnly: true).filter(\.phase.isPending)
+    }
+
     func pendingConfigCutover() throws -> [V011SwitchJournal] {
         try allJournals().filter { journal in
             guard journal.phase.isPending else { return false }
@@ -211,11 +215,11 @@ struct V011SwitchJournalStore {
         }
     }
 
-    private func allJournals() throws -> [V011SwitchJournal] {
+    private func allJournals(readOnly: Bool = false) throws -> [V011SwitchJournal] {
         guard fileManager.fileExists(atPath: rootURL.path) else {
             return []
         }
-        try prepareRoot(rootURL)
+        try prepareRoot(rootURL, readOnly: readOnly)
         return try allJournalsUnlocked()
     }
 
@@ -334,7 +338,7 @@ struct V011SwitchJournalStore {
         rootURL.appendingPathComponent("\(id).json")
     }
 
-    private func prepareRoot(_ url: URL) throws {
+    private func prepareRoot(_ url: URL, readOnly: Bool = false) throws {
         if fileManager.fileExists(atPath: url.path) {
             let values = try url.resourceValues(forKeys: [
                 .isDirectoryKey,
@@ -345,12 +349,14 @@ struct V011SwitchJournalStore {
                 throw V011SwitchError.invalidRecoveryJournal
             }
         } else {
+            guard !readOnly else { throw V011SwitchError.invalidRecoveryJournal }
             try fileManager.createDirectory(
                 at: url,
                 withIntermediateDirectories: true,
                 attributes: [.posixPermissions: 0o700]
             )
         }
+        guard !readOnly else { return }
         try fileManager.setAttributes(
             [.posixPermissions: 0o700],
             ofItemAtPath: url.path

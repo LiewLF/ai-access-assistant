@@ -3,6 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct BeginnerManagedModelCatalogImportHelpView: View {
+    @Environment(\.appDisplayTextSize) private var displayTextSize
     let profile: CodexRelayProfile
     let chooseFile: () -> Void
     let scanFolder: () -> Void
@@ -29,45 +30,54 @@ struct BeginnerManagedModelCatalogImportHelpView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("要导入什么")
-                    .font(.title2.bold())
-                Text(
-                    "选一个模型目录 JSON。它通常来自当前中转或供应商导出的模型列表，也可以是你之前保存过的目录副本。"
-                )
-                .foregroundStyle(.secondary)
-            }
-            Text(
-                "如果你只知道文件夹，不知道文件名，先点自动扫描；如果相关文件在隐藏的 .codex 里，先扫默认目录。"
-            )
-            .font(.callout)
-            .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("要导入什么")
+                            .font(.title2.bold())
+                        Text(
+                            "选一个模型目录 JSON。它通常来自当前中转或供应商导出的模型列表，也可以是你之前保存过的目录副本。"
+                        )
+                        .foregroundStyle(.secondary)
+                    }
+                    Text(
+                        "如果你只知道文件夹，不知道文件名，先点自动扫描；如果相关文件在隐藏的 .codex 里，先扫默认目录。"
+                    )
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
 
-            GroupBox("硬要求") {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("• 顶层要有 models 或 data 数组")
-                    Text("• 每个模型至少要有 id / slug / model / name 其中一个")
-                    Text("• 可选字段：context_window、service_tiers、reasoning_efforts、input_modalities")
-                    Text("• 不要选截图、config.toml、说明文档或随便的文本文件")
+                    GroupBox("硬要求") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("• 顶层要有 models 或 data 数组")
+                            Text("• 每个模型至少要有 id / slug / model / name 其中一个")
+                            Text("• 可选字段：context_window、service_tiers、reasoning_efforts、input_modalities")
+                            Text("• 不要选截图、config.toml、说明文档或随便的文本文件")
+                        }
+                        .font(.callout)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    GroupBox("样例") {
+                        Text(sampleJSON)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    Text(
+                        "如果你没有这类 JSON，就先别导入；先找供应商给你的模型目录文件，或找当前轨默认模型 \(profile.defaultModel) 所在的目录副本。"
+                    )
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                 }
-                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            GroupBox("样例") {
-                Text(sampleJSON)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            Text(
-                "如果你没有这类 JSON，就先别导入；先找供应商给你的模型目录文件，或找当前轨默认模型 \(profile.defaultModel) 所在的目录副本。"
-            )
-            .font(.callout)
-            .foregroundStyle(.secondary)
-
-            HStack {
+            Divider()
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 190), alignment: .leading)],
+                alignment: .leading, spacing: 10
+            ) {
                 Button("自动扫描文件夹") {
                     dismiss()
                     scanFolder()
@@ -88,9 +98,13 @@ struct BeginnerManagedModelCatalogImportHelpView: View {
                     cancel()
                 }
                 .buttonStyle(.bordered)
+                .keyboardShortcut(.cancelAction)
             }
         }
         .padding(24)
+        .appDisplayScale(displayTextSize)
+        .frame(minWidth: 520, idealWidth: 720, maxWidth: 900,
+               minHeight: 440, idealHeight: 560, maxHeight: 760)
     }
 }
 
@@ -109,23 +123,24 @@ struct BeginnerManagedModelCatalogImportReview: Identifiable {
 }
 
 struct BeginnerManagedModelCatalogImportReviewView: View {
+    @Environment(\.appDisplayTextSize) private var displayTextSize
     let review: BeginnerManagedModelCatalogImportReview
     let chooseCandidate: (BeginnerManagedModelCatalogCandidate) -> Void
     let cancel: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("找到候选")
-                    .font(.title2.bold())
-                Text(
-                    "\(review.sourceLabel) 里找到了 \(review.candidates.count) 个可导入的模型目录 JSON。"
-                )
-                .foregroundStyle(.secondary)
-            }
+            Text("找到候选")
+                .font(.title2.bold())
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
+                    Text(
+                        "\(review.sourceLabel) 里找到了 \(review.candidates.count) 个可导入的模型目录 JSON。"
+                    )
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     ForEach(review.candidates) { candidate in
                         Button {
                             chooseCandidate(candidate)
@@ -134,6 +149,7 @@ struct BeginnerManagedModelCatalogImportReviewView: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(candidate.url.lastPathComponent)
                                         .font(.headline)
+                                        .fixedSize(horizontal: false, vertical: true)
                                     Text(
                                         "模型 \(candidate.modelIDs.count) 个"
                                             + (candidate.matchesDefaultModel
@@ -142,13 +158,14 @@ struct BeginnerManagedModelCatalogImportReviewView: View {
                                     )
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
                                     Text(
                                         candidate.modelIDs.prefix(3)
                                             .joined(separator: " · ")
                                     )
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
-                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
                                 }
                                 Spacer()
                                 if candidate.matchesDefaultModel {
@@ -163,24 +180,36 @@ struct BeginnerManagedModelCatalogImportReviewView: View {
                                 }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(Color(nsColor: .controlBackgroundColor),
+                                        in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8)
+                                .stroke(.quaternary, lineWidth: 1))
+                            .contentShape(Rectangle())
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.plain)
                     }
                 }
             }
 
+            Divider()
             HStack {
                 Button("取消") {
                     cancel()
                 }
                 .buttonStyle(.bordered)
+                .keyboardShortcut(.cancelAction)
             }
         }
         .padding(24)
+        .appDisplayScale(displayTextSize)
+        .frame(minWidth: 520, idealWidth: 760, maxWidth: 900,
+               minHeight: 440, idealHeight: 560, maxHeight: 760)
     }
 }
 
 struct BeginnerCapabilityVerificationView: View {
+    @Environment(\.appDisplayTextSize) private var displayTextSize
     @ObservedObject var model: ConfigWorkspaceModel
     @ObservedObject var accessModel: V011AccessModel
 
@@ -192,8 +221,94 @@ struct BeginnerCapabilityVerificationView: View {
     @State private var localError: String?
 
     var body: some View {
+        panel(displayTextSize: displayTextSize)
+        .confirmationDialog(
+            "确认验证基础能力？",
+            isPresented: $confirmsCoreProbe
+        ) {
+            Button("确认联网并验证基础能力") {
+                accessModel.detectCurrentConnection(
+                    userConsented: true
+                )
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(
+                "当前中转将由助手直接发送一次Responses最小真实请求，最长20秒；不会启动独立Codex CLI、不会启动MCP，也不会占用当前会话。官方轨仍使用Codex验证。可能产生一次API费用；不会修改配置。"
+            )
+        }
+        .confirmationDialog(
+            "确认验证 Fast？",
+            isPresented: $confirmsFastProbe
+        ) {
+            Button("确认联网并验证 Fast") {
+                accessModel.runOptionalProviderCapabilityProbe(
+                    .serviceTier,
+                    userConsented: true
+                )
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(
+                "将向当前中转发送一次真实Fast请求。会联网，并可能产生额外API费用；不会修改配置。"
+            )
+        }
+        .confirmationDialog(
+            "确认验证 Web Search 与来源引用？",
+            isPresented: $confirmsWebSearchProbe
+        ) {
+            Button("确认联网并验证 Web Search 与来源引用") {
+                accessModel.runOptionalProviderCapabilityProbe(
+                    .webSearchResponses,
+                    userConsented: true
+                )
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(
+                "将发送一次真实Web Search请求，并在同一响应验证来源引用。会联网，并可能产生额外API及搜索费用；不会修改配置。"
+            )
+        }
+        .confirmationDialog(
+            "确认验证图片输入？",
+            isPresented: $confirmsImageInputProbe
+        ) {
+            Button("确认联网并验证图片输入") {
+                accessModel.runOptionalProviderCapabilityProbe(
+                    .imageInput,
+                    userConsented: true
+                )
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(
+                "将发送一次小型合成图片请求。会联网，并可能产生额外API费用；不会读取用户图片或修改配置。"
+            )
+        }
+        .onAppear { refreshHealth() }
+        .onChange(of: accessModel.isCheckingCurrentConnection) {
+            wasChecking, isChecking in
+            guard wasChecking, !isChecking else { return }
+            refreshHealth()
+        }
+        .onChange(of: accessModel.providerProbeReceipts) {
+            _, _ in refreshHealth()
+        }
+        .onChange(of: accessModel.isWorking) {
+            wasWorking, isWorking in
+            guard wasWorking, !isWorking else { return }
+            refreshHealth()
+        }
+        .onChange(of: accessModel.isRefreshing) {
+            wasRefreshing, isRefreshing in
+            guard wasRefreshing, !isRefreshing else { return }
+            refreshHealth()
+        }
+    }
+
+    func panel(displayTextSize: AppDisplayTextSize) -> some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("扩展能力验证")
                         .font(.title2.bold())
@@ -202,9 +317,12 @@ struct BeginnerCapabilityVerificationView: View {
                     )
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 Button("完成") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .fixedSize()
             }
             .padding(20)
 
@@ -244,7 +362,10 @@ struct BeginnerCapabilityVerificationView: View {
 
                     GroupBox("Provider可选探针") {
                         VStack(alignment: .leading, spacing: 10) {
-                            HStack {
+                            LazyVGrid(
+                                columns: [GridItem(.adaptive(minimum: 230), alignment: .leading)],
+                                alignment: .leading, spacing: 10
+                            ) {
                                 Button("验证 Fast") {
                                     confirmsFastProbe = true
                                 }
@@ -388,88 +509,9 @@ struct BeginnerCapabilityVerificationView: View {
                 .padding(20)
             }
         }
-        .confirmationDialog(
-            "确认验证基础能力？",
-            isPresented: $confirmsCoreProbe
-        ) {
-            Button("确认联网并验证基础能力") {
-                accessModel.detectCurrentConnection(
-                    userConsented: true
-                )
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text(
-                "当前中转将由助手直接发送一次Responses最小真实请求，最长20秒；不会启动独立Codex CLI、不会启动MCP，也不会占用当前会话。官方轨仍使用Codex验证。可能产生一次API费用；不会修改配置。"
-            )
-        }
-        .confirmationDialog(
-            "确认验证 Fast？",
-            isPresented: $confirmsFastProbe
-        ) {
-            Button("确认联网并验证 Fast") {
-                accessModel.runOptionalProviderCapabilityProbe(
-                    .serviceTier,
-                    userConsented: true
-                )
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text(
-                "将向当前中转发送一次真实Fast请求。会联网，并可能产生额外API费用；不会修改配置。"
-            )
-        }
-        .confirmationDialog(
-            "确认验证 Web Search 与来源引用？",
-            isPresented: $confirmsWebSearchProbe
-        ) {
-            Button("确认联网并验证 Web Search 与来源引用") {
-                accessModel.runOptionalProviderCapabilityProbe(
-                    .webSearchResponses,
-                    userConsented: true
-                )
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text(
-                "将发送一次真实Web Search请求，并在同一响应验证来源引用。会联网，并可能产生额外API及搜索费用；不会修改配置。"
-            )
-        }
-        .confirmationDialog(
-            "确认验证图片输入？",
-            isPresented: $confirmsImageInputProbe
-        ) {
-            Button("确认联网并验证图片输入") {
-                accessModel.runOptionalProviderCapabilityProbe(
-                    .imageInput,
-                    userConsented: true
-                )
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text(
-                "将发送一次小型合成图片请求。会联网，并可能产生额外API费用；不会读取用户图片或修改配置。"
-            )
-        }
-        .onAppear { refreshHealth() }
-        .onChange(of: accessModel.isCheckingCurrentConnection) {
-            wasChecking, isChecking in
-            guard wasChecking, !isChecking else { return }
-            refreshHealth()
-        }
-        .onChange(of: accessModel.providerProbeReceipts) {
-            _, _ in refreshHealth()
-        }
-        .onChange(of: accessModel.isWorking) {
-            wasWorking, isWorking in
-            guard wasWorking, !isWorking else { return }
-            refreshHealth()
-        }
-        .onChange(of: accessModel.isRefreshing) {
-            wasRefreshing, isRefreshing in
-            guard wasRefreshing, !isRefreshing else { return }
-            refreshHealth()
-        }
+        .appDisplayScale(displayTextSize)
+        .frame(minWidth: 520, idealWidth: 780, maxWidth: 960,
+               minHeight: 440, idealHeight: 680, maxHeight: 820)
     }
 
     private var networkProbeDisabled: Bool {

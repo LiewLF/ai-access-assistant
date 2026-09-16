@@ -233,7 +233,7 @@ extension CodexRelayProfile {
         let modelCapability = capability?.models.first {
             $0.modelID == defaultModel
         }
-        let preset = Self.recommendedGPT56Limits(
+        let preset = additionalFields["cpaManagedCapture"] == .bool(true) ? nil : Self.recommendedGPT56Limits(
             for: defaultModel
         )
         let resolvedContextWindow = contextWindow
@@ -262,7 +262,7 @@ extension CodexRelayProfile {
             credentialReference:
                 v011CredentialReference,
             requiresOpenAIAuth:
-                capability?.requiresOpenAIAuth ?? true,
+                additionalFields["cpaManagedCapture"] == .bool(true) ? false : (capability?.requiresOpenAIAuth ?? true),
             upstreamName: capability?.upstreamName,
             modelVerbosity:
                 capability?.modelVerbosity.map {
@@ -291,7 +291,8 @@ extension CodexRelayProfile {
             supportsStandaloneWebSearch:
                 capability?.supportsStandaloneWebSearch.map {
                     .set($0)
-                } ?? .preserve
+                } ?? .preserve,
+            localGatewayConfirmed: localGatewayConfirmed == true
         )
     }
 

@@ -36,6 +36,26 @@ struct V011AccessDependencies: @unchecked Sendable {
     let verifyCurrentRelay: @Sendable
         (CodexRelayProfile, String) async throws -> String
 
+    /// LTP-130 draft verification: the draft's explicitly specified model is
+    /// checked with one bounded request. Reading the /models directory stays
+    /// an independent draft discovery, so a missing or unauthorized directory
+    /// never blocks a manually specified model. No retry, no model or key
+    /// substitution. The same path serves add and switch-preflight callers.
+    static func verifyDraftSpecifiedModel(
+        profile: CodexRelayProfile,
+        apiKey: String,
+        session: URLSession? = nil
+    ) async throws -> String {
+        try await RelayConnectionVerifier.verify(
+            profile: profile,
+            apiKey: apiKey,
+            session: session,
+            confirmedLocalGateway:
+                profile.localGatewayConfirmed == true,
+            verifyModelCatalog: false
+        )
+    }
+
     static let live: V011AccessDependencies = {
         let support = FileManager.default.urls(
             for: .applicationSupportDirectory,
@@ -93,7 +113,7 @@ struct V011AccessDependencies: @unchecked Sendable {
                     codexHome: codexHome,
                     credentialStore: credentialStore,
                     versionDiscovery: versionDiscovery,
-                    commandTimeout: 20
+                    commandTimeout: 90
                 ),
             agentLoopVerifier:
                 V011LiveAgentLoopVerifier(
@@ -141,11 +161,9 @@ struct V011AccessDependencies: @unchecked Sendable {
             beforeOfficialRecoverySave: {},
             adoptionFaultInjector: { _ in },
             verifyDraft: { profile, apiKey in
-                try await RelayConnectionVerifier.verify(
+                try await Self.verifyDraftSpecifiedModel(
                     profile: profile,
-                    apiKey: apiKey,
-                    confirmedLocalGateway:
-                        profile.localGatewayConfirmed == true
+                    apiKey: apiKey
                 )
             },
             verifyCurrentRelay: { profile, apiKey in

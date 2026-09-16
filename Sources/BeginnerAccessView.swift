@@ -59,7 +59,6 @@ struct BeginnerAccessView: View {
     @State private var confirmsRealAgentLoop = false
     @State private var selectedRepairPreview:
         V014RecoveryRepairPreview?
-    @State private var addAfterModelFetch = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -111,10 +110,12 @@ struct BeginnerAccessView: View {
                         protocolIsSupported: protocolIsSupported,
                         protocolCompatibilityMessage:
                             protocolCompatibilityMessage,
+                        primaryActionTitle: relayDraftPrimaryActionTitle,
                         addRelayDisabled: addRelayDisabled,
                         synchronizeFastModeWithServiceTier:
                             synchronizeFastModeWithServiceTier,
-                        checkRelayDraft: checkRelayDraft
+                        checkRelayDraft: checkRelayDraft,
+                        readRelayDraftModels: readRelayDraftModels
                     )
                 case .switchMode:
                     BeginnerModeSwitchView(
@@ -157,21 +158,10 @@ struct BeginnerAccessView: View {
         .onChange(of: model.isFetchingModels) {
             wasFetching,
             isFetching in
-            guard wasFetching,
-                  !isFetching,
-                  addAfterModelFetch else {
+            guard wasFetching, !isFetching else {
                 return
             }
-            addAfterModelFetch = false
-            if model.modelName
-                .trimmingCharacters(
-                    in: .whitespacesAndNewlines
-                ).isEmpty {
-                localStatus =
-                    "没有取得模型。可点“读取模型”，或手动填入中转提供的模型名称。"
-            } else {
-                submitRelayDraft()
-            }
+            performRelayDraftAction(.modelReadFinished)
         }
         .sheet(item: $pendingTarget) { target in
             BeginnerSwitchConfirmationCard(
@@ -282,7 +272,8 @@ struct BeginnerAccessView: View {
         }
         .sheet(item: $selectedRepairPreview) { preview in
             BeginnerRecoveryRepairPreviewView(
-                preview: preview
+                preview: preview,
+                canConfirm: accessModel.canRunDeterministicRepair
             ) { fingerprint in
                 accessModel.runDeterministicRepair(
                     userConsented: true,
@@ -311,6 +302,8 @@ struct BeginnerAccessView: View {
             return false
         }
         switch action {
+        case .keepCurrentConfiguration:
+            return accessModel.canKeepCurrentConfigurationAndEndPendingSwitch
         case .checkBasicConnection:
             return accessModel.canCheckCurrentConnection
         case .verifyRealTask:
@@ -334,6 +327,8 @@ struct BeginnerAccessView: View {
         case .previewRecovery:
             selectedRepairPreview =
                 accessModel.recoveryRepairPreview
+        case .keepCurrentConfiguration:
+            accessModel.keepCurrentConfigurationAndEndPendingSwitch()
         case .openDiagnostics:
             onOpenDiagnostics()
         case let .resolveFailure(failureAction):
@@ -369,7 +364,6 @@ struct BeginnerAccessView: View {
         case .reviewTLSAndProxy, .checkNetwork,
                 .reviewToolPermission,
                 .reviewResponsesCompatibility,
-                .stopOtherConfigurationTools,
                 .openAdvancedDiagnostics:
             onOpenDiagnostics()
         }
@@ -456,6 +450,7 @@ struct BeginnerAccessView: View {
                 "请先处理上方所有资料冲突，再继续添加。"
             return
         }
+        guard relayDraftAddressIsValid() else { return }
         let missing = model.missingFields
         let missingWithoutModel = missing.filter {
             $0 != "模型"
@@ -468,23 +463,53 @@ struct BeginnerAccessView: View {
                 )
             return
         }
-        if missing.contains("模型") {
-            addAfterModelFetch = true
-            localStatus =
-                "资料已齐，正在自动读取中转支持的模型；失败后仍可手动填写。"
-            if !model.isFetchingModels {
-                model.fetchModels()
-            }
+        performRelayDraftAction(.primaryButton)
+    }
+
+    private func relayDraftAddressIsValid() -> Bool {
+        guard let issue = V011RelayEndpointPolicy.draftIssue(model.baseURL,
+            localGatewayConfirmed: model.confirmsLocalGateway) else { return true }
+        localStatus = issue
+        return false
+    }
+
+    private func readRelayDraftModels() {
+        guard !addRelayDisabled, relayDraftAddressIsValid() else { return }
+        model.fetchModels()
+    }
+
+    private func performRelayDraftAction(_ event: BeginnerRelayDraftEvent) {
+        switch BeginnerRelayDraftActionPolicy.action(
+            for: event,
+            isDraftVisible: section == .addRelay,
+            isBusy: addRelayDisabled,
+            isFetchingModels: model.isFetchingModels,
+            hasSelectedModel: !model.missingFields.contains("模型")
+        ) {
+        case .none:
             return
+        case .readModels:
+            localStatus =
+                "正在读取可用模型。选定后，请点击“检测并添加”完成验证和保存。"
+            readRelayDraftModels()
+        case .submit:
+            submitRelayDraft()
+        case let .feedback(message):
+            localStatus = message
         }
-        submitRelayDraft()
+    }
+
+    private var relayDraftPrimaryActionTitle: String {
+        BeginnerRelayDraftActionPolicy.buttonTitle(
+            isFetchingModels: model.isFetchingModels,
+            hasSelectedModel: !model.missingFields.contains("模型")
+        )
     }
 
     private func submitRelayDraft() {
         guard protocolIsSupported,
               model.unresolvedConflicts.isEmpty,
               model.missingFields.isEmpty else {
-            checkRelayDraft()
             return
         }
         synchronizeFastModeWithServiceTier(
@@ -531,6 +556,7 @@ struct BeginnerAccessView: View {
         accessModel.isWorking
             || accessModel.isRefreshing
             || accessModel.isCheckingCurrentConnection
+            || model.isFetchingModels
             || accessModel.hasPendingRecovery
             || !protocolIsSupported
             || !model.unresolvedConflicts.isEmpty

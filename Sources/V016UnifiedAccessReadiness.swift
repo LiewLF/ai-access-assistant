@@ -23,6 +23,7 @@ enum V016AccessReadinessCode:
     case doctorActionRequired = "doctor_action_required"
     case routeUnknown = "route_unknown"
     case runtimeChanged = "runtime_changed"
+    case currentStateReadRequired = "current_state_read_required"
     case realTaskRequired = "real_task_required"
     case basicConnectionRequired = "basic_connection_required"
 }
@@ -53,6 +54,7 @@ enum V016AccessReadinessEvidenceSource:
 enum V016AccessReadinessPrimaryAction: Equatable, Sendable {
     case installCodex
     case previewRecovery
+    case keepCurrentConfiguration
     case openDiagnostics
     case resolveFailure(V013FailurePrimaryAction)
     case performDoctorAction(CodexDoctorPrimaryAction)
@@ -65,6 +67,7 @@ enum V016AccessReadinessPrimaryAction: Equatable, Sendable {
         switch self {
         case .installCodex: return "安装 Codex"
         case .previewRecovery: return "查看恢复预览"
+        case .keepCurrentConfiguration: return "保留当前设置并结束上次操作"
         case .openDiagnostics: return "查看诊断"
         case let .resolveFailure(action): return action.title
         case let .performDoctorAction(action): return action.title
@@ -86,6 +89,10 @@ struct V016AccessReadinessInput: Equatable, Sendable {
     let journey: V015UserJourneyDecision
     let activeFailure: V013FailurePresentation?
     let doctorGuidance: CodexDoctorActionableGuidance?
+    var needsCurrentStateRead: Bool = false
+    var needsRecoveryStateRead: Bool = false
+    var canKeepCurrentConfiguration: Bool = false
+    var isRecoveryActionRunning: Bool = false
 }
 
 struct V016AccessReadinessDecision: Equatable, Sendable {
@@ -115,15 +122,23 @@ enum V016AccessReadinessResolver {
             )
         }
         if input.hasPendingRecovery {
+            let busy = input.isReadingCurrentState || input.isRecoveryActionRunning
+            let action: V016AccessReadinessPrimaryAction = input.needsRecoveryStateRead
+                ? .refreshState : input.canKeepCurrentConfiguration
+                    ? .keepCurrentConfiguration : input.canPreviewRecovery
+                        ? .previewRecovery : .openDiagnostics
+            let explanation = input.needsRecoveryStateRead
+                ? "已找到未完成记录；先离线读取恢复状态，再选择适用的处理方式。"
+                : input.canKeepCurrentConfiguration
+                    ? "可保留当前设置和聊天内容，仅归档上次未完成的操作记录。"
+                    : "当前设置和历史保持保护；先处理已有恢复点。"
             return decision(
                 input,
                 code: .recoveryPending,
-                state: .blocked,
-                conclusion: "上次操作尚未安全结束",
-                explanation:
-                    "当前设置和历史保持保护；先处理已有恢复点。",
-                action: input.canPreviewRecovery
-                    ? .previewRecovery : .openDiagnostics,
+                state: busy ? .checking : .blocked,
+                conclusion: busy ? "正在核对和处理恢复状态" : "上次操作尚未安全结束",
+                explanation: explanation,
+                action: busy ? nil : action,
                 source: .recovery
             )
         }
@@ -258,6 +273,14 @@ enum V016AccessReadinessResolver {
                 explanation: V015PassiveStateReadBoundary.detail,
                 action: .refreshState,
                 source: .none
+            )
+        }
+        if input.needsCurrentStateRead {
+            return decision(
+                input, code: .currentStateReadRequired, state: .needsAction,
+                conclusion: "已识别当前接入，先核对状态",
+                explanation: "先离线核对版本、恢复状态和已有验证记录；不会重新发送模型请求。",
+                action: .refreshState, source: .none
             )
         }
         if input.runtimeChangeInvalidatedRealTaskEvidence {
@@ -430,7 +453,11 @@ enum V016AccessReadinessRuntimeResolver {
                     ),
                 journey: projection.journey,
                 activeFailure: failure,
-                doctorGuidance: doctorGuidance
+                doctorGuidance: doctorGuidance,
+                needsCurrentStateRead: accessModel.needsCurrentStateRead,
+                needsRecoveryStateRead: accessModel.recoveryDisposition == .unread,
+                canKeepCurrentConfiguration: accessModel.canKeepCurrentConfigurationAndEndPendingSwitch,
+                isRecoveryActionRunning: accessModel.isWorking
             )
         )
     }

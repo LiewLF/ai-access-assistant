@@ -4,9 +4,7 @@ import UniformTypeIdentifiers
 @main
 #endif
 struct ConfigAdvisorApp: App {
-    init() {
-        _ = SensitiveTemporaryArtifactJanitor.cleanupExpired()
-    }
+    @NSApplicationDelegateAdaptor(V013CPACollectionAppLifecycle.self) private var collectionLifecycle
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -187,6 +185,7 @@ struct ContentView: View {
     @StateObject private var vaultMigrationModel =
         AppVaultKeyMigrationModel(dependencies: .live)
     @StateObject private var shellState = AppShellState()
+    @StateObject private var continuityDraft = BeginnerContinuityViewState()
     @AppStorage(AppDisplayTextSize.storageKey)
     private var displayTextSize =
         AppDisplayTextSize.defaultValue
@@ -201,13 +200,13 @@ struct ContentView: View {
                 )
                 Divider()
                 HStack(spacing: 0) {
-                    sidebar
+                    AppMainNavigationView(shellState: shellState)
                     Divider()
                     detail
                 }
             }
         }
-        .dynamicTypeSize(displayTextSize.dynamicTypeSize)
+        .appDisplayScale(displayTextSize)
         .fileImporter(
             isPresented: $importerOpen,
             allowedContentTypes: [.png, .jpeg, .tiff, .heic],
@@ -216,44 +215,6 @@ struct ContentView: View {
             if case let .success(urls) = result {
                 configModel.addScreenshots(urls)
             }
-        }
-        .sheet(
-            isPresented: Binding(
-                get: { shellState.settingsOpen },
-                set: shellState.setSettingsPresented
-            )
-        ) {
-            BeginnerSettingsView(
-                model: configModel,
-                accessModel: v011AccessModel,
-                historyModel: v011HistoryModel,
-                initialSection:
-                    shellState.settingsInitialSection,
-                onUseRelayEntry: { entry in
-                    configModel.importDirectoryEntry(entry)
-                    shellState.openAccess(.addRelay)
-                    shellState.setSettingsPresented(false)
-                },
-                onConfigureCustomRelay: {
-                    configModel.selectRelay(
-                        RelayCatalog.customID
-                    )
-                    shellState.openAccess(.addRelay)
-                    shellState.setSettingsPresented(false)
-                },
-                openAccessSection: { section in
-                    shellState.openAccess(section)
-                    shellState.setSettingsPresented(false)
-                }
-            )
-            .frame(
-                minWidth: 840,
-                idealWidth: 920,
-                maxWidth: 1_080,
-                minHeight: 620,
-                idealHeight: 700,
-                maxHeight: 820
-            )
         }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didLaunchApplicationNotification)) { notification in
             requestRefreshForCodexLifecycle(notification)
@@ -328,80 +289,43 @@ struct ContentView: View {
                 }
             )
         case .access:
-            BeginnerAccessView(
+            if CodexApplicationLocator.applicationURL() == nil {
+                AppMissingCodexPage(openInstallation: { shellState.openSettings(.software) })
+            } else {
+                BeginnerAccessView(
+                    model: configModel,
+                    accessModel: v011AccessModel,
+                    section: Binding(
+                        get: { shellState.accessSection },
+                        set: shellState.selectAccessSection
+                    ),
+                    onChooseScreenshots: { importerOpen = true },
+                    onInstallCodex: { shellState.openSettings(.software) },
+                    onOpenDiagnostics: { shellState.openSettings(.diagnostics) },
+                    onOpenGuide: {
+                        shellState.openSettings(.guide)
+                    }
+                )
+            }
+        case .sessions:
+            if CodexApplicationLocator.applicationURL() == nil {
+                AppMissingCodexPage(openInstallation: { shellState.openSettings(.software) })
+            } else {
+                BeginnerHistoryView(
+                    model: v011HistoryModel,
+                    accessModel: v011AccessModel
+                )
+            }
+        case .capabilities:
+            BeginnerExtensionCapabilitiesView(model: configModel, accessModel: v011AccessModel)
+        case .settings:
+            AppSettingsPage(
                 model: configModel,
                 accessModel: v011AccessModel,
-                section: Binding(
-                    get: { shellState.accessSection },
-                    set: shellState.selectAccessSection
-                ),
-                onChooseScreenshots: { importerOpen = true },
-                onInstallCodex: { shellState.openSettings(.software) },
-                onOpenDiagnostics: { shellState.openSettings(.diagnostics) },
-                onOpenGuide: {
-                    shellState.openSettings(.guide)
-                }
+                historyModel: v011HistoryModel,
+                shellState: shellState,
+                continuityDraft: continuityDraft
             )
-        case .sessions:
-            BeginnerHistoryView(
-                model: v011HistoryModel,
-                accessModel: v011AccessModel
-            )
-        }
-    }
-
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(availableMainModes) { item in
-                Button {
-                    shellState.selectMainMode(item)
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: item.systemImage)
-                            .frame(width: 20)
-                        Text(item.rawValue)
-                        Spacer()
-                    }
-                    .font(
-                        .body.weight(
-                            shellState.mode == item ? .semibold : .regular
-                        )
-                    )
-                    .foregroundStyle(
-                        shellState.mode == item
-                            ? Color.accentColor : Color.primary
-                    )
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
-                    .background(
-                        shellState.mode == item
-                            ? Color.accentColor.opacity(0.1)
-                            : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 9)
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-            Spacer()
-            Label(
-                "切换失败会恢复原状态",
-                systemImage: "checkmark.shield"
-            )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(10)
-        }
-        .padding(12)
-        .frame(width: 190)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
-    }
-
-    private var availableMainModes: [MainMode] {
-        guard CodexApplicationLocator.applicationURL() == nil else {
-            return MainMode.allCases
-        }
-        return MainMode.allCases.filter {
-            $0 != .access && $0 != .sessions
         }
     }
 
@@ -421,7 +345,7 @@ struct ContentView: View {
             Text("v\(appVersion)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            displayTextSizeMenu
+            AppDisplayTextSizeMenu(selection: $displayTextSize)
             Button {
                 shellState.openSettings(.software)
             } label: {
@@ -430,34 +354,12 @@ struct ContentView: View {
                     .frame(width: 30, height: 30)
             }
             .buttonStyle(.plain)
+            .disabled(shellState.navigationLocked)
             .help("设置与诊断")
             .accessibilityLabel("设置与诊断")
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 15)
-    }
-
-    private var displayTextSizeMenu: some View {
-        Menu {
-            Picker(
-                "显示字号",
-                selection: $displayTextSize
-            ) {
-                ForEach(AppDisplayTextSize.allCases) { size in
-                    Text(size.title).tag(size)
-                }
-            }
-        } label: {
-            Image(systemName: "textformat.size")
-                .font(.system(size: 16))
-                .frame(width: 30, height: 30)
-        }
-        .menuStyle(.borderlessButton)
-        .help("显示字号")
-        .accessibilityLabel("显示字号")
-        .accessibilityIdentifier(
-            "build174.display-text-size"
-        )
     }
 
     private var appVersion: String {

@@ -160,6 +160,7 @@ enum V011RecoveryFailureStage: String, Codable, Equatable {
 }
 
 enum V011RecoveryDisposition: Equatable {
+    case unread
     case none
     case recoverable
     case decisionRequired

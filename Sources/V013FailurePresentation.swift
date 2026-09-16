@@ -14,7 +14,6 @@ enum V013FailurePrimaryAction: String, Equatable, Sendable {
     case updateAssistant
     case reviewToolPermission
     case reviewResponsesCompatibility
-    case stopOtherConfigurationTools
     case restartAssistant
     case openAdvancedDiagnostics
 
@@ -42,8 +41,6 @@ enum V013FailurePrimaryAction: String, Equatable, Sendable {
             return "检查Codex工具权限"
         case .reviewResponsesCompatibility:
             return "检查Responses兼容性"
-        case .stopOtherConfigurationTools:
-            return "停止其他配置工具"
         case .restartAssistant:
             return "重开助手"
         case .openAdvancedDiagnostics:
@@ -83,82 +80,139 @@ struct V013FailurePresentation: Equatable, Sendable {
         let status = observation.httpStatus.map {
             "（HTTP \($0)）"
         } ?? ""
+        let isOfficial = observation.providerID == "openai"
+        let service = isOfficial ? "官方" : "中转"
         switch category {
         case .authentication:
             return make(
-                conclusion: "中转认证未通过",
-                explanation: "认证未通过\(status)。检查API Key与对应中转资料。",
-                action: .reviewRelayProfile,
+                conclusion: "\(service)认证未通过",
+                explanation: isOfficial
+                    ? "基础请求认证未通过\(status)。请在Codex官方界面核对登录状态。"
+                    : "认证未通过\(status)。检查API Key与对应中转资料。",
+                action: isOfficial ? .openCodexLogin : .reviewRelayProfile,
                 evidence: connectionEvidence(observation)
             )
         case .permission:
             return make(
-                conclusion: "中转访问受限",
-                explanation: "服务拒绝请求\(status)。可能是账号、模型或地区权限，不能据此断定API Key错误。",
-                action: .reviewRelayProfile,
+                conclusion: "\(service)访问受限",
+                explanation: isOfficial
+                    ? "官方服务拒绝基础请求\(status)。需核对账号、模型或地区权限，不能据此断定登录失效。"
+                    : "服务拒绝请求\(status)。可能是账号、模型或地区权限，不能据此断定API Key错误。",
+                action: isOfficial ? .openAdvancedDiagnostics : .reviewRelayProfile,
                 evidence: connectionEvidence(observation)
             )
         case .endpointOrModel:
             return make(
-                conclusion: "中转地址或模型不可用",
-                explanation: "地址、协议路径或默认模型不可用\(status)。检查中转资料。",
-                action: .reviewRelayProfile,
+                conclusion: "\(service)地址或模型不可用",
+                explanation: isOfficial
+                    ? "官方基础请求的地址、协议或模型不可用\(status)。请查看诊断并核对Codex版本与模型。"
+                    : "地址、协议路径或默认模型不可用\(status)。检查中转资料。",
+                action: isOfficial ? .openAdvancedDiagnostics : .reviewRelayProfile,
                 evidence: connectionEvidence(observation)
             )
         case .quotaExhausted:
             return make(
-                conclusion: "中转额度不足",
-                explanation: "账户余额或额度不足\(status)。无需反复检测或更换API Key。",
+                conclusion: "\(service)额度不足",
+                explanation: isOfficial
+                    ? "官方基础请求报告额度不足\(status)。请核对套餐与额度，无需反复检测。"
+                    : "账户余额或额度不足\(status)。无需反复检测或更换API Key。",
                 action: .reviewQuota,
                 evidence: connectionEvidence(observation)
             )
         case .rateLimited:
             return make(
-                conclusion: "中转请求暂时受限",
-                explanation: "请求过于频繁\(status)。无需先更换API Key。",
+                conclusion: "\(service)请求暂时受限",
+                explanation: isOfficial
+                    ? "基础请求过于频繁\(status)。可稍后再检测，无需先重新登录。"
+                    : "请求过于频繁\(status)。无需先更换API Key。",
                 action: .retryLater,
                 evidence: connectionEvidence(observation)
             )
         case .upstreamUnavailable:
             return make(
-                conclusion: "中转服务暂时异常",
-                explanation: "中转服务暂时异常\(status)。助手不会自动切换接入。",
+                conclusion: "\(service)服务暂时异常",
+                explanation: "\(service)服务暂时异常\(status)。助手不会自动切换接入。",
                 action: .retryLater,
                 evidence: connectionEvidence(observation)
             )
         case .networkNameResolutionFailed:
             return make(
-                conclusion: "中转域名无法解析",
-                explanation: "域名无法解析。先核对中转地址；地址无误时检查DNS或网络。",
-                action: .reviewDNSAndAddress,
+                conclusion: "\(service)域名无法解析",
+                explanation: isOfficial
+                    ? "官方基础请求的域名无法解析。请检查DNS、网络或代理。"
+                    : "域名无法解析。先核对中转地址；地址无误时检查DNS或网络。",
+                action: isOfficial ? .checkNetwork : .reviewDNSAndAddress,
                 evidence: connectionEvidence(observation)
             )
         case .networkSecureConnectionFailed:
             return make(
-                conclusion: "中转安全连接未通过",
+                conclusion: "\(service)安全连接未通过",
                 explanation: "TLS或证书验证未通过。检查系统时间、代理或证书链；助手不会绕过证书验证。",
                 action: .reviewTLSAndProxy,
                 evidence: connectionEvidence(observation)
             )
         case .networkTimedOut:
             return make(
-                conclusion: "中转连接超时",
-                explanation: "请求在时限内未完成。检查服务与代理可达性后再检测。",
+                conclusion: "\(service)基础连接检测超时",
+                explanation: isOfficial
+                    ? "上次检测未在等待时限内完成，可能涉及 Codex 启动或响应等待，不能据此判定网络故障；额度读取成功也不代表基础请求通过。"
+                    : "上次检测未在等待时限内完成，可能涉及 Codex 启动或响应等待，不能据此判定服务或代理故障。",
                 action: .retryLater,
                 evidence: connectionEvidence(observation)
             )
         case .networkUnavailable:
             return make(
-                conclusion: "中转网络未连通",
+                conclusion: "\(service)网络未连通",
                 explanation: "网络或代理连接未完成。核对连接后再检测。",
                 action: .checkNetwork,
                 evidence: connectionEvidence(observation)
             )
         case .invalidResponse:
             return make(
-                conclusion: "中转响应格式不可用",
-                explanation: "服务已响应，但格式不是可用的Responses结果\(status)。",
+                conclusion: "\(service)响应格式不可用",
+                explanation: "服务已响应，但本次协议的结果无法识别\(status)。",
                 action: .reviewResponsesCompatibility,
+                evidence: connectionEvidence(observation)
+            )
+        case .probeBudgetExhausted:
+            // LTP-140: the probe's own 8 token budget, not account quota and
+            // not a rate limit. The persisted text never claims the response
+            // had no text; that detail stays in the immediate typed error.
+            return make(
+                conclusion: "\(service)响应未在探测预算内完成",
+                explanation: "已收到响应，但它在本次探测的 8 token 预算内没有完成\(status)。这不代表账户额度、套餐或服务不可用；可在需要时重新检测。",
+                action: .retryLater,
+                evidence: connectionEvidence(observation)
+            )
+        case .probeCancelled:
+            return make(
+                conclusion: "\(service)验证已取消",
+                explanation: "本次探测在完成前被取消\(status)。没有完成验证，也没有失败结论；这不代表服务不可用或额度不足，可在需要时重新检测。",
+                action: .retryLater,
+                evidence: connectionEvidence(observation)
+            )
+        case .probeRefused:
+            return make(
+                conclusion: "\(service)模型拒绝了探针请求",
+                explanation: "模型对本次最小请求给出了明确拒绝\(status)。这是模型侧的决定，不能据此判断服务不可用或额度不足；可在需要时重新检测。",
+                action: .retryLater,
+                evidence: connectionEvidence(observation)
+            )
+        case .probeMissingCompletion:
+            return make(
+                conclusion: "\(service)响应缺少正常结束",
+                explanation: "已收到响应，但没有可识别的正常结束标记\(status)。保留有限证据，未完成验证；这不代表服务不可用或额度不足。",
+                action: .retryLater,
+                evidence: connectionEvidence(observation)
+            )
+        case .probeNoVisibleText:
+            // LTP-140: only the observed fact is persisted. Some wire
+            // protocols can deliver a body without any completion marker,
+            // so the card never claims the response ended normally.
+            return make(
+                conclusion: "\(service)响应没有可见文字",
+                explanation: "本次探测收到的响应没有可见文字（可能只有推理或工具内容）\(status)。未完成验证；这不代表服务不可用或额度不足。",
+                action: .retryLater,
                 evidence: connectionEvidence(observation)
             )
         case .unknown:
@@ -267,8 +321,15 @@ struct V013FailurePresentation: Equatable, Sendable {
     }
 
     static func agentLoop(
-        _ stage: V011AgentLoopFailureStage
+        _ stage: V011AgentLoopFailureStage,
+        reason: V011AgentLoopFailureReason? = nil
     ) -> Self {
+        if let reason {
+            return make(conclusion: reason.userTitle, explanation: reason.userAction,
+                        action: .openAdvancedDiagnostics,
+                        evidence: ["阶段：真实任务", "失败位置：\(stage.rawValue)",
+                                   "原因：\(reason.rawValue)"])
+        }
         let explanation: String
         let action: V013FailurePrimaryAction
         switch stage {
@@ -276,8 +337,8 @@ struct V013FailurePresentation: Equatable, Sendable {
             explanation = "隔离验证环境未建立；真实设置与历史会话未被使用。"
             action = .openAdvancedDiagnostics
         case .initialResponse:
-            explanation = "验证命令在模型请求前退出；这不代表余额不足。"
-            action = .updateAssistant
+            explanation = stage.userAction
+            action = .openAdvancedDiagnostics
         case .toolCall:
             explanation = "当前模型或中转只完成普通回复，尚不能证明可完成Codex任务。"
             action = .reviewResponsesCompatibility
@@ -291,8 +352,8 @@ struct V013FailurePresentation: Equatable, Sendable {
             explanation = "最终回复与验证合同不一致；当前链路返回不完整。"
             action = .reviewResponsesCompatibility
         case .configurationChanged:
-            explanation = "验证期间Codex设置发生变化，本次结果已作废。"
-            action = .stopOtherConfigurationTools
+            explanation = "验证期间Codex设置发生变化，本次证据已作废。重新读取当前状态；若再次变化，仅说明证据仍未稳定，不会停止进程、修改配置或自动重试。"
+            action = .refreshState
         case .cleanup:
             explanation = "临时验证目录未能立即清理；过期目录仍由助手受控清理。"
             action = .restartAssistant
@@ -315,7 +376,7 @@ struct V013FailurePresentation: Equatable, Sendable {
         case .preparation:
             return "隔离验证环境未建立"
         case .initialResponse:
-            return "Codex没有开始真实任务"
+            return stage.userTitle
         case .toolCall:
             return "模型没有发起本机工具调用"
         case .toolExecution:
@@ -356,9 +417,9 @@ struct V013FailurePresentation: Equatable, Sendable {
             explanation = "本次结果已作废，先重新读取当前状态。"
             action = .refreshState
         case .sessionProviderDrift:
-            conclusion = "当前任务仍可能使用旧接入"
-            explanation = "连接可用，但已打开任务的路由标签未同步。"
-            action = .restartAssistant
+            conclusion = "历史任务保留其他接入标签"
+            explanation = "这是历史标签差异，不代表当前请求路由或连接失败；可在高级诊断查看检测记录。"
+            action = .openAdvancedDiagnostics
         case .receiptMismatch:
             conclusion = "连接证据与当前配置不一致"
             explanation = "旧证据未被采用，先重新读取当前状态。"

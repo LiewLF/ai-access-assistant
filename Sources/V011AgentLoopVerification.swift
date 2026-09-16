@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import CryptoKit
 import Foundation
+import CoreFoundation
 
 enum V011AgentLoopOutcome: String, Codable, Equatable, Sendable {
     case passed
@@ -24,7 +24,7 @@ enum V011AgentLoopFailureStage:
         case .preparation:
             return "隔离验证环境未建立"
         case .initialResponse:
-            return "Codex没有开始真实任务"
+            return "真实任务验证未完成"
         case .toolCall:
             return "模型没有发起本机工具调用"
         case .toolExecution:
@@ -45,7 +45,7 @@ enum V011AgentLoopFailureStage:
         case .preparation:
             return "重新读取当前状态；仍失败时检查Codex安装与配置文件权限。"
         case .initialResponse:
-            return "验证命令在模型请求前退出；这不代表余额不足。请更新Codex或助手后再验证。"
+            return "现有记录未保留具体原因，不能确认请求是否发出或是否消耗额度。请查看高级诊断。"
         case .toolCall:
             return "当前模型或中转可能只支持普通回复，不能证明可完成Codex任务。"
         case .toolExecution:
@@ -55,181 +55,61 @@ enum V011AgentLoopFailureStage:
         case .finalResponse:
             return "当前链路返回不完整；请核对模型与Responses兼容性。"
         case .configurationChanged:
-            return "停止其他配置工具，重新读取后再验证。"
+            return "本次证据已作废。重新读取当前状态；若再次变化，仅说明证据仍未稳定，不会停止进程、修改配置或自动重试。"
         case .cleanup:
             return "退出助手后重开；过期临时目录会由助手清理。"
         }
     }
 }
 
-struct V011AgentLoopReceipt:
-    Codable, Equatable, Sendable {
-    static let currentSchemaVersion = 1
-    static let currentProbeVersion = 1
-
-    let schemaVersion: Int
-    let probeVersion: Int
-    let observedAt: Date
-    let expiresAt: Date
-    let durationMilliseconds: Double
-    let providerID: String
-    let endpointHost: String?
-    let modelID: String
-    let configHash: String
-    let codexAppVersion: String
-    let codexAppBuild: String
-    let codexCLIVersion: String
-    let codexCLISHA256: String
-    let outcome: V011AgentLoopOutcome
-    let failureStage: V011AgentLoopFailureStage?
-    let eventStructureSHA256: String
-    let toolCallCount: Int
-    let requestCount: Int
-
-    init(
-        observedAt: Date,
-        expiresAt: Date,
-        durationMilliseconds: Double,
-        providerID: String,
-        endpointHost: String?,
-        modelID: String,
-        configHash: String,
-        codexAppVersion: String,
-        codexAppBuild: String,
-        codexCLIVersion: String,
-        codexCLISHA256: String,
-        outcome: V011AgentLoopOutcome,
-        failureStage: V011AgentLoopFailureStage?,
-        eventStructureSHA256: String,
-        toolCallCount: Int,
-        requestCount: Int = 1
-    ) {
-        schemaVersion = Self.currentSchemaVersion
-        probeVersion = Self.currentProbeVersion
-        self.observedAt = observedAt
-        self.expiresAt = expiresAt
-        self.durationMilliseconds = durationMilliseconds
-        self.providerID = providerID
-        self.endpointHost = endpointHost
-        self.modelID = modelID
-        self.configHash = configHash
-        self.codexAppVersion = codexAppVersion
-        self.codexAppBuild = codexAppBuild
-        self.codexCLIVersion = codexCLIVersion
-        self.codexCLISHA256 = codexCLISHA256
-        self.outcome = outcome
-        self.failureStage = failureStage
-        self.eventStructureSHA256 = eventStructureSHA256
-        self.toolCallCount = toolCallCount
-        self.requestCount = requestCount
-    }
-
-    var evidenceKey: String {
-        let canonical = [
-            "provider=\(providerID)",
-            "endpoint=\(endpointHost ?? "official")",
-            "model=\(modelID)",
-            "config=\(configHash)",
-            "app=\(codexAppVersion)",
-            "build=\(codexAppBuild)",
-            "cli=\(codexCLIVersion)",
-            "cli_sha256=\(codexCLISHA256)",
-            "probe=\(probeVersion)",
-        ].joined(separator: "\n")
-        return Self.sha256(Data(canonical.utf8))
-    }
-
-    var isStructurallyValid: Bool {
-        let outcomeIsValid = outcome == .passed
-            ? failureStage == nil
-            : failureStage != nil
-        return schemaVersion == Self.currentSchemaVersion
-            && probeVersion == Self.currentProbeVersion
-            && observedAt.timeIntervalSinceReferenceDate.isFinite
-            && expiresAt.timeIntervalSinceReferenceDate.isFinite
-            && expiresAt > observedAt
-            && durationMilliseconds.isFinite
-            && durationMilliseconds >= 0
-            && Self.safeIdentifier(providerID, maximum: 256)
-            && endpointHost.map(Self.safeHost) != false
-            && Self.safeIdentifier(modelID, maximum: 512)
-            && Self.isSHA256(configHash)
-            && Self.safeIdentifier(codexAppVersion, maximum: 128)
-            && Self.safeIdentifier(codexAppBuild, maximum: 128)
-            && Self.safeIdentifier(codexCLIVersion, maximum: 128)
-            && Self.isSHA256(codexCLISHA256)
-            && Self.isSHA256(eventStructureSHA256)
-            && toolCallCount >= 0
-            && toolCallCount <= 32
-            && requestCount == 1
-            && outcomeIsValid
-    }
-
-    static func providerID(_ live: LiveCodexState) -> String {
-        switch live.mode {
-        case .official:
-            return "openai"
-        case let .relay(providerID):
-            return providerID
-        }
-    }
-
-    static func endpointHost(_ live: LiveCodexState) -> String? {
-        guard case .relay = live.mode,
-              let baseURL = live.provider?.baseURL,
-              let components = URLComponents(string: baseURL),
-              let host = components.host,
-              !host.isEmpty else {
-            return nil
-        }
-        return components.port.map {
-            "\(host.lowercased()):\($0)"
-        } ?? host.lowercased()
-    }
-
-    static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map {
-            String(format: "%02x", $0)
-        }.joined()
-    }
-
-    private static func safeIdentifier(
-        _ value: String,
-        maximum: Int
-    ) -> Bool {
-        !value.isEmpty
-            && value.utf8.count <= maximum
-            && value == value.trimmingCharacters(
-                in: .whitespacesAndNewlines
-            )
-            && !value.unicodeScalars.contains(where: {
-                CharacterSet.controlCharacters.contains($0)
-            })
-    }
-
-    private static func safeHost(_ value: String) -> Bool {
-        safeIdentifier(value, maximum: 512)
-            && !value.contains(where: {
-                $0.isWhitespace || "/@?#\\".contains($0)
-            })
-    }
-
-    private static func isSHA256(_ value: String) -> Bool {
-        value.count == 64
-            && value.allSatisfy {
-                $0.isHexDigit && !$0.isUppercase
-            }
-    }
-}
-
 struct V011AgentLoopProbeResult: Equatable, Sendable {
     let receipt: V011AgentLoopReceipt
+    let completedUsage: V012CompletedTurnUsage?
+
+    init(
+        receipt: V011AgentLoopReceipt,
+        completedUsage: V012CompletedTurnUsage? = nil
+    ) {
+        self.receipt = receipt
+        self.completedUsage = completedUsage
+    }
 
     var safeMessage: String {
+        if let reason = receipt.failureReason {
+            return "\(reason.userTitle)。\(reason.userAction)"
+        }
         guard let stage = receipt.failureStage else {
             return "真实任务闭环已通过：模型调用了本机工具、接收工具结果并完成续答。"
         }
         return "\(stage.userTitle)。\(stage.userAction)"
+    }
+}
+
+struct V011AgentLoopExecUsage: Equatable, Sendable {
+    let threadID: String
+    let inputTokens: Int64
+    let cachedInputTokens: Int64
+    let cacheWriteInputTokens: Int64?
+    let outputTokens: Int64
+    let reasoningOutputTokens: Int64
+
+    var isStructurallyValid: Bool {
+        !threadID.isEmpty
+            && threadID.utf8.count <= 256
+            && !threadID.unicodeScalars.contains(where: {
+                CharacterSet.controlCharacters.contains($0)
+            })
+            && [
+                inputTokens,
+                cachedInputTokens,
+                outputTokens,
+                reasoningOutputTokens,
+            ].allSatisfy { $0 >= 0 }
+            && cachedInputTokens <= inputTokens
+            && cacheWriteInputTokens.map {
+                $0 >= 0 && cachedInputTokens + $0 <= inputTokens
+            } != false
+            && reasoningOutputTokens <= outputTokens
     }
 }
 
@@ -260,8 +140,7 @@ enum V011AgentLoopVerificationError:
 protocol V011AgentLoopVerifying {
     func verify(
         userConsented: Bool,
-        expectedProviderID: String?,
-        expectedConfigHash: String?
+        expectedRouteIdentity: V011AgentLoopRouteIdentity?
     ) throws -> V011AgentLoopProbeResult
 
     func receiptMatchesCurrent(
@@ -274,8 +153,9 @@ protocol V011AgentLoopVerifying {
 struct V011AgentLoopTraceAnalysis: Equatable, Sendable {
     let outcome: V011AgentLoopOutcome
     let failureStage: V011AgentLoopFailureStage?
-    let eventStructureSHA256: String
     let toolCallCount: Int
+    let execUsage: V011AgentLoopExecUsage?
+    var failureReason: V011AgentLoopFailureReason? = nil
 }
 
 enum V011AgentLoopTraceAnalyzer {
@@ -293,30 +173,23 @@ enum V011AgentLoopTraceAnalyzer {
         var finalResponseObserved = false
         var turnCompleted = false
         var toolCallCount = 0
-        var structure: [String] = []
-
+        var threadID: String?
+        var execUsage: V011AgentLoopExecUsage?
         for line in text.split(whereSeparator: { $0.isNewline }) {
             guard let lineData = String(line).data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(
                     with: lineData
                   ) as? [String: Any] else {
-                structure.append("invalid-json")
                 continue
             }
             let eventType = object["type"] as? String ?? "unknown"
             let item = object["item"] as? [String: Any]
             let itemType = item?["type"] as? String ?? "none"
-            let status = item?["status"] as? String ?? "none"
-            let exitClass: String
-            if let exitCode = item?["exit_code"] as? Int {
-                exitClass = exitCode == 0 ? "zero" : "nonzero"
-            } else {
-                exitClass = "none"
-            }
-            structure.append(
-                "\(eventType)|\(itemType)|\(status)|\(exitClass)"
-            )
 
+            if eventType == "thread.started",
+               let value = object["thread_id"] as? String {
+                threadID = value
+            }
             if eventType == "turn.started" {
                 turnStarted = true
             }
@@ -350,11 +223,15 @@ enum V011AgentLoopTraceAnalyzer {
             if eventType == "turn.completed",
                finalResponseObserved {
                 turnCompleted = true
+                execUsage = parseExecUsage(
+                    object["usage"],
+                    threadID: threadID
+                )
             }
         }
 
         let failureStage: V011AgentLoopFailureStage?
-        if terminationStatus != 0 || !turnStarted {
+        if !turnStarted {
             failureStage = .initialResponse
         } else if !toolStarted {
             failureStage = .toolCall
@@ -362,7 +239,7 @@ enum V011AgentLoopTraceAnalyzer {
             failureStage = .toolExecution
         } else if !continuationObserved {
             failureStage = .continuation
-        } else if !finalResponseObserved || !turnCompleted {
+        } else if !finalResponseObserved || !turnCompleted || terminationStatus != 0 {
             failureStage = .finalResponse
         } else {
             failureStage = nil
@@ -370,11 +247,48 @@ enum V011AgentLoopTraceAnalyzer {
         return V011AgentLoopTraceAnalysis(
             outcome: failureStage == nil ? .passed : .failed,
             failureStage: failureStage,
-            eventStructureSHA256: V011AgentLoopReceipt.sha256(
-                Data(structure.joined(separator: "\n").utf8)
-            ),
-            toolCallCount: toolCallCount
+            toolCallCount: toolCallCount,
+            execUsage: failureStage == nil ? execUsage : nil,
+            failureReason: terminationStatus != 0 ? .processExit : nil
         )
+    }
+
+    static func parseExecUsage(
+        _ value: Any?,
+        threadID: String?
+    ) -> V011AgentLoopExecUsage? {
+        guard let threadID,
+              let usage = value as? [String: Any],
+              let input = nonnegativeInteger(usage["input_tokens"]),
+              let cached = nonnegativeInteger(
+                usage["cached_input_tokens"]
+              ),
+              let output = nonnegativeInteger(usage["output_tokens"])
+        else { return nil }
+        let result = V011AgentLoopExecUsage(
+            threadID: threadID,
+            inputTokens: input,
+            cachedInputTokens: cached,
+            cacheWriteInputTokens: nonnegativeInteger(
+                usage["cache_write_input_tokens"]
+            ) ?? (usage["cache_write_input_tokens"] == nil ? 0 : nil),
+            outputTokens: output,
+            reasoningOutputTokens: nonnegativeInteger(
+                usage["reasoning_output_tokens"]
+            ) ?? 0
+        )
+        return result.isStructurallyValid ? result : nil
+    }
+
+    private static func nonnegativeInteger(_ value: Any?) -> Int64? {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+        let double = number.doubleValue
+        guard double.isFinite,
+              double >= 0,
+              double <= Double(Int64.max),
+              double.rounded() == double else { return nil }
+        return Int64(double)
     }
 
     private static func containsOutput(
@@ -418,7 +332,6 @@ struct V011LiveAgentLoopVerifier:
     let codexHome: URL
     let versionDiscovery: any FableCodexVersionDiscovering
     let commandRunner: any FableCommandRunning
-    let binaryHasher: any CodexBinaryHashing
     let fileManager: FileManager
     let now: @Sendable () -> Date
     let temporaryRoot: URL
@@ -427,7 +340,6 @@ struct V011LiveAgentLoopVerifier:
         codexHome: URL,
         versionDiscovery: any FableCodexVersionDiscovering,
         commandRunner: any FableCommandRunning = FableSystemCommandRunner(),
-        binaryHasher: any CodexBinaryHashing = CodexBinarySHA256Hasher(),
         fileManager: FileManager = .default,
         now: @escaping @Sendable () -> Date = { Date() },
         temporaryRoot: URL = FileManager.default.temporaryDirectory
@@ -435,7 +347,6 @@ struct V011LiveAgentLoopVerifier:
         self.codexHome = codexHome.standardizedFileURL
         self.versionDiscovery = versionDiscovery
         self.commandRunner = commandRunner
-        self.binaryHasher = binaryHasher
         self.fileManager = fileManager
         self.now = now
         self.temporaryRoot = temporaryRoot.standardizedFileURL
@@ -443,8 +354,7 @@ struct V011LiveAgentLoopVerifier:
 
     func verify(
         userConsented: Bool,
-        expectedProviderID: String?,
-        expectedConfigHash: String?
+        expectedRouteIdentity: V011AgentLoopRouteIdentity?
     ) throws -> V011AgentLoopProbeResult {
         guard userConsented else {
             throw V011AgentLoopVerificationError
@@ -454,13 +364,14 @@ struct V011LiveAgentLoopVerifier:
         let observedAt = now()
         let installation = try versionDiscovery.discover()
         guard installation.support.allowsWrites,
-              let entry = installation.contractEntry,
-              entry.matches(installation.identity),
-              let executionProtocol =
-                installation.agentLoopExecutionProtocol else {
+              let runtimeIdentity =
+                V011AgentLoopRuntimeIdentity(
+                    installation: installation
+                ) else {
             throw V011AgentLoopVerificationError
                 .unsupportedVersion
         }
+        let executionProtocol = runtimeIdentity.executionProtocol
         let configURL = codexHome.appendingPathComponent(
             "config.toml",
             isDirectory: false
@@ -470,31 +381,19 @@ struct V011LiveAgentLoopVerifier:
             maximumBytes: Self.maximumConfigurationBytes,
             required: true
         ) ?? Data()
-        let configHash = V011AgentLoopReceipt.sha256(configData)
-        guard expectedConfigHash.map({ $0 == configHash }) != false,
-              let configuration = try? TOMLSemanticEngine.parse(
-                String(decoding: configData, as: UTF8.self)
-              ),
-              let model = configuration.rootString("model")?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-              !model.isEmpty else {
+        let routeIdentity = try V011AgentLoopRouteIdentity(
+            configurationData: configData
+        )
+        guard routeIdentity.modelID != nil else {
             throw V011AgentLoopVerificationError
                 .unsafeConfiguration
         }
-        let providerID = configuration.rootString(
-            "model_provider"
-        ) ?? "openai"
-        guard expectedProviderID.map({ $0 == providerID }) != false else {
+        guard expectedRouteIdentity.map({
+            $0 == routeIdentity
+        }) != false else {
             throw V011AgentLoopVerificationError
                 .configurationChanged
         }
-        let endpointHost = try endpointHost(
-            configuration: configuration,
-            providerID: providerID
-        )
-        let cliSHA256 = try binaryHasher.sha256(
-            of: installation.cliURL
-        )
         let marker = "AI_ACCESS_AGENT_LOOP_OK_"
             + UUID().uuidString.replacingOccurrences(
                 of: "-",
@@ -513,12 +412,10 @@ struct V011LiveAgentLoopVerifier:
         var analysis = V011AgentLoopTraceAnalysis(
             outcome: .failed,
             failureStage: .preparation,
-            eventStructureSHA256:
-                V011AgentLoopReceipt.sha256(
-                    Data("preparation".utf8)
-                ),
-            toolCallCount: 0
+            toolCallCount: 0,
+            execUsage: nil
         )
+        var completedUsage: V012CompletedTurnUsage?
         var configurationChanged = false
         do {
             try prepareSandbox(
@@ -544,7 +441,8 @@ struct V011LiveAgentLoopVerifier:
                 let arguments = [
                     "exec",
                     "-c", "mcp_servers={}",
-                    "--ephemeral",
+                    // Persist only inside the disposable CODEX_HOME so the
+                    // verified usage reader can retain non-sensitive call facts.
                     "--ignore-rules",
                     "--skip-git-repo-check",
                 ] + executionProtocol.commandArguments + [
@@ -570,15 +468,61 @@ struct V011LiveAgentLoopVerifier:
                     marker: marker,
                     terminationStatus: result.terminationStatus
                 )
+                let completedAt = now()
+                if let usage = analysis.execUsage,
+                   let model = routeIdentity.modelID {
+                    completedUsage = V012CompletedTurnUsage(
+                        id: V011AgentLoopReceipt.sha256(
+                            Data(usage.threadID.utf8)
+                        ),
+                        startedAt: observedAt,
+                        completedAt: completedAt,
+                        durationMilliseconds: Int64(
+                            max(
+                                0,
+                                completedAt.timeIntervalSince(observedAt)
+                                    * 1_000
+                            )
+                        ),
+                        timeToFirstTokenMilliseconds: nil,
+                        model: model,
+                        providerID: routeIdentity.providerID,
+                        serviceTier: "unknown",
+                        calls: [
+                            V012UpstreamTokenUsage(
+                                observedAt: completedAt,
+                                inputTokens: usage.inputTokens,
+                                cachedInputTokens:
+                                    usage.cachedInputTokens,
+                                cacheWriteInputTokens:
+                                    usage.cacheWriteInputTokens,
+                                outputTokens: usage.outputTokens,
+                                reasoningOutputTokens:
+                                    usage.reasoningOutputTokens,
+                                activeContextTokens: nil,
+                                rateLimit: nil,
+                                creditBalance: nil
+                            ),
+                        ]
+                    )
+                    completedUsage?.containsOnlyTurnTotals = true
+                    if let total = completedUsage {
+                        completedUsage = V012VerifiedExecUsage.read(
+                            codexHome: tempCodexHome,
+                            expected: total
+                        ) ?? total
+                        completedUsage?.sourceThreadID = usage.threadID
+                        completedUsage?.sourceThreadIDHash = V011AgentLoopReceipt.sha256(
+                            Data(usage.threadID.utf8))
+                    }
+                }
             } catch {
                 analysis = V011AgentLoopTraceAnalysis(
                     outcome: .failed,
                     failureStage: .initialResponse,
-                    eventStructureSHA256:
-                        V011AgentLoopReceipt.sha256(
-                            Data("command-error".utf8)
-                        ),
-                    toolCallCount: 0
+                    toolCallCount: 0,
+                    execUsage: nil,
+                    failureReason: V011AgentLoopFailureReason(commandError: error)
                 )
             }
             let currentData = try boundedRegularFile(
@@ -586,18 +530,17 @@ struct V011LiveAgentLoopVerifier:
                 maximumBytes: Self.maximumConfigurationBytes,
                 required: true
             ) ?? Data()
-            configurationChanged =
-                V011AgentLoopReceipt.sha256(currentData)
-                    != configHash
+            configurationChanged = (
+                try? V011AgentLoopRouteIdentity(
+                    configurationData: currentData
+                )
+            ) != routeIdentity
         } catch {
             analysis = V011AgentLoopTraceAnalysis(
                 outcome: .failed,
                 failureStage: .preparation,
-                eventStructureSHA256:
-                    V011AgentLoopReceipt.sha256(
-                        Data("preparation-error".utf8)
-                    ),
-                toolCallCount: 0
+                toolCallCount: 0,
+                execUsage: nil
             )
         }
 
@@ -625,25 +568,21 @@ struct V011LiveAgentLoopVerifier:
                 Self.evidenceLifetime
             ),
             durationMilliseconds: Double(elapsed) / 1_000_000,
-            providerID: providerID,
-            endpointHost: endpointHost,
-            modelID: model,
-            configHash: configHash,
-            codexAppVersion: installation.identity.appVersion,
-            codexAppBuild: installation.identity.appBuild,
-            codexCLIVersion: installation.identity.cliVersion,
-            codexCLISHA256: cliSHA256,
+            routeIdentity: routeIdentity,
+            runtimeIdentity: runtimeIdentity,
             outcome: failureStage == nil ? .passed : .failed,
             failureStage: failureStage,
-            eventStructureSHA256:
-                analysis.eventStructureSHA256,
-            toolCallCount: analysis.toolCallCount
+            toolCallCount: analysis.toolCallCount,
+            failureReason: failureStage == analysis.failureStage ? analysis.failureReason : nil
         )
         guard receipt.isStructurallyValid else {
             throw V011AgentLoopVerificationError
                 .unsafeConfiguration
         }
-        return V011AgentLoopProbeResult(receipt: receipt)
+        return V011AgentLoopProbeResult(
+            receipt: receipt,
+            completedUsage: failureStage == nil ? completedUsage : nil
+        )
     }
 
     func receiptMatchesCurrent(
@@ -654,23 +593,17 @@ struct V011LiveAgentLoopVerifier:
         guard receipt.isStructurallyValid,
               receipt.outcome == .passed,
               receipt.expiresAt > now,
-              receipt.configHash == live.configHash,
-              receipt.providerID
-                == V011AgentLoopReceipt.providerID(live),
-              receipt.endpointHost
-                == V011AgentLoopReceipt.endpointHost(live),
-              receipt.modelID == live.model,
-              receipt.codexAppVersion == live.version.appVersion,
-              receipt.codexAppBuild == live.version.appBuild,
-              receipt.codexCLIVersion == live.version.cliVersion,
+              receipt.targets(live),
               let installation = try? versionDiscovery.discover(),
               installation.identity == live.version,
-              let currentHash = try? binaryHasher.sha256(
-                of: installation.cliURL
-              ) else {
+              let runtimeIdentity =
+                V011AgentLoopRuntimeIdentity(
+                    installation: installation
+                ),
+              runtimeIdentity == receipt.runtimeIdentity else {
             return false
         }
-        return currentHash == receipt.codexCLISHA256
+        return true
     }
 
     private func prepareSandbox(
@@ -755,103 +688,6 @@ struct V011LiveAgentLoopVerifier:
         return try Data(contentsOf: url, options: .mappedIfSafe)
     }
 
-    private func endpointHost(
-        configuration: TOMLSemanticDocument,
-        providerID: String
-    ) throws -> String? {
-        guard providerID != "openai" else { return nil }
-        guard let baseURL = configuration.string(at: [
-            "model_providers", providerID, "base_url",
-        ]),
-        let components = URLComponents(string: baseURL),
-        components.scheme?.lowercased() == "https",
-        components.user == nil,
-        components.password == nil,
-        components.query == nil,
-        components.fragment == nil,
-        let host = components.host,
-        !host.isEmpty else {
-            throw V011AgentLoopVerificationError
-                .unsafeConfiguration
-        }
-        return components.port.map {
-            "\(host.lowercased()):\($0)"
-        } ?? host.lowercased()
-    }
-}
-
-struct V011AgentLoopReceiptStore {
-    static let maximumBytes = 128 * 1024
-
-    let fileURL: URL
-    private let fileManager: FileManager
-    private let writer: FableAtomicConfigWriter
-
-    init(
-        fileURL: URL,
-        fileManager: FileManager = .default,
-        writer: FableAtomicConfigWriter = FableAtomicConfigWriter()
-    ) {
-        self.fileURL = fileURL.standardizedFileURL
-        self.fileManager = fileManager
-        self.writer = writer
-    }
-
-    func load() throws -> V011AgentLoopReceipt? {
-        guard fileManager.fileExists(atPath: fileURL.path) else {
-            return nil
-        }
-        let values = try fileURL.resourceValues(forKeys: [
-            .isRegularFileKey,
-            .isSymbolicLinkKey,
-            .fileSizeKey,
-        ])
-        guard values.isRegularFile == true,
-              values.isSymbolicLink != true,
-              let size = values.fileSize,
-              size <= Self.maximumBytes else {
-            throw V011AgentLoopVerificationError
-                .unsafeConfiguration
-        }
-        let receipt = try JSONDecoder().decode(
-            V011AgentLoopReceipt.self,
-            from: Data(contentsOf: fileURL)
-        )
-        guard receipt.isStructurallyValid else {
-            throw V011AgentLoopVerificationError
-                .unsafeConfiguration
-        }
-        return receipt
-    }
-
-    func commit(_ receipt: V011AgentLoopReceipt) throws {
-        guard receipt.isStructurallyValid else {
-            throw V011AgentLoopVerificationError
-                .unsafeConfiguration
-        }
-        try fileManager.createDirectory(
-            at: fileURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        try fileManager.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: fileURL.deletingLastPathComponent().path
-        )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(receipt)
-        guard data.count <= Self.maximumBytes else {
-            throw V011AgentLoopVerificationError
-                .unsafeConfiguration
-        }
-        try writer.write(
-            data,
-            to: fileURL,
-            expectedCurrentHash:
-                SessionSyncFileSafety.hashIfPresent(fileURL)
-        )
-    }
 }
 
 final class V011AgentLoopRepairRecorder:
@@ -892,9 +728,12 @@ struct V011AgentLoopRepairRuntimeVerifier:
     private func verifyAgentLoop(providerID: String) throws {
         let result = try agentLoopVerifier.verify(
             userConsented: true,
-            expectedProviderID: providerID,
-            expectedConfigHash: nil
+            expectedRouteIdentity: nil
         )
+        guard result.receipt.providerID == providerID else {
+            throw V011AgentLoopVerificationError
+                .configurationChanged
+        }
         recorder.record(result)
         try receiptStore.commit(result.receipt)
         guard result.receipt.outcome == .passed else {

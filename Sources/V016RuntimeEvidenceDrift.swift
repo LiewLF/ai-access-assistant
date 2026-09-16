@@ -8,16 +8,11 @@ enum V016RuntimeEvidenceDrift {
         guard let receipt, let live,
               receipt.isStructurallyValid,
               receipt.outcome == .passed,
-              receipt.configHash == live.configHash,
-              receipt.providerID
-                == V011AgentLoopReceipt.providerID(live),
-              receipt.endpointHost
-                == V011AgentLoopReceipt.endpointHost(live),
-              receipt.modelID == live.model else {
+              let currentRoute =
+                V011AgentLoopRouteIdentity(live: live),
+              receipt.routeIdentity == currentRoute else {
             return false
         }
-        return receipt.codexAppVersion != live.version.appVersion
-            || receipt.codexAppBuild != live.version.appBuild
-            || receipt.codexCLIVersion != live.version.cliVersion
+        return !receipt.runtimeIdentity.matches(live.version)
     }
 }

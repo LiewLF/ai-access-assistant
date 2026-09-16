@@ -741,6 +741,12 @@ struct FableSystemCommandRunner: FableCommandRunning {
         while process.isRunning {
             guard Date() < deadline else {
                 process.terminate()
+                let terminationDeadline = Date().addingTimeInterval(1)
+                while process.isRunning && Date() < terminationDeadline {
+                    Thread.sleep(forTimeInterval: 0.02)
+                }
+                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                process.waitUntilExit()
                 throw FableLiveAdapterError.commandTimedOut
             }
             Thread.sleep(forTimeInterval: 0.02)
@@ -1228,112 +1234,21 @@ struct FableLiveRuntimeVerifier: FableRuntimeVerifier {
     }
 
     func verifyOfficial() throws {
-        let installation = try versionDiscovery.discover()
-        guard supportsRuntimeVerification(installation) else {
-            throw FableLiveAdapterError.unsupportedVersion
-        }
-        let result: FableCommandResult
-        do {
-            result = try commandRunner.run(
-                executable: installation.cliURL,
-                arguments: try verificationArguments(),
-                environmentOverrides: [
-                    "CODEX_HOME": codexHome.path,
-                ],
-                timeout: commandTimeout,
-                maximumCapturedBytes: 0
-            )
-        } catch let error as FableLiveAdapterError {
-            throw error
-        } catch {
-            throw FableLiveAdapterError.commandFailed
-        }
-        guard result.terminationStatus == 0 else {
-            throw FableLiveAdapterError.commandFailed
-        }
+        try verifyCurrentConfiguration()
     }
 
     func verifyRelay(_ profile: RelayProfile) throws {
+        try verifyCurrentConfiguration()
+    }
+
+    private func verifyCurrentConfiguration() throws {
         let installation = try versionDiscovery.discover()
         guard supportsRuntimeVerification(installation) else {
             throw FableLiveAdapterError.unsupportedVersion
         }
-        let result: FableCommandResult
-        do {
-            result = try commandRunner.run(
-                executable: installation.cliURL,
-                arguments: try verificationArguments(),
-                environmentOverrides: [
-                    "CODEX_HOME": codexHome.path,
-                ],
-                timeout: commandTimeout,
-                maximumCapturedBytes: 0
-            )
-        } catch let error as FableLiveAdapterError {
-            throw error
-        } catch {
-            throw FableLiveAdapterError.commandFailed
-        }
-        guard result.terminationStatus == 0 else {
-            throw FableLiveAdapterError.commandFailed
-        }
-    }
-
-    private func verificationArguments() throws -> [String] {
-        var arguments = ["exec"]
-        if let override = try mcpIsolationOverride() {
-            arguments.append(contentsOf: ["-c", override])
-        }
-        arguments.append(contentsOf: [
-            "--ephemeral",
-            "--skip-git-repo-check",
-            "--color",
-            "never",
-            "Reply with exactly OK.",
-        ])
-        return arguments
-    }
-
-    private func mcpIsolationOverride() throws -> String? {
-        let configURL = codexHome.appendingPathComponent(
-            "config.toml",
-            isDirectory: false
-        )
-        guard FileManager.default.fileExists(atPath: configURL.path) else {
-            return nil
-        }
-        let document: TOMLSemanticDocument
-        do {
-            let data = try Data(contentsOf: configURL)
-            document = try TOMLSemanticEngine.parse(
-                String(decoding: data, as: UTF8.self)
-            )
-        } catch {
-            throw FableLiveAdapterError.verificationPreparationFailed
-        }
-        let names = Set(document.leaves.keys.compactMap { path -> String? in
-            let components = TOMLSemanticEngine.decodePath(path)
-            guard components.count >= 2,
-                  components[0] == "mcp_servers" else {
-                return nil
-            }
-            if components.count == 2,
-               components[1] == "<empty-table>" {
-                return nil
-            }
-            return components[1]
-        })
-        guard !names.isEmpty else { return nil }
-        do {
-            let entries = try names.sorted().map { name in
-                let encoded = try JSONEncoder().encode(name)
-                let key = String(decoding: encoded, as: UTF8.self)
-                return "\(key) = { enabled = false }"
-            }
-            return "mcp_servers={ \(entries.joined(separator: ", ")) }"
-        } catch {
-            throw FableLiveAdapterError.verificationPreparationFailed
-        }
+        try FableBasicConnectionProbe.run(installation: installation,
+            codexHome: codexHome, commandRunner: commandRunner,
+            commandTimeout: commandTimeout)
     }
 
     private func supportsRuntimeVerification(

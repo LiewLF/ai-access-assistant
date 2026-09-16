@@ -18,6 +18,16 @@ enum ConfigWorkspaceScreenshotAcquisitionOutcome {
     case failure(String)
 }
 
+/// LTP-130: one truth for the draft's directory discovery. Catalog evidence is
+/// kept only for the latest completed read, so a later failure, empty result,
+/// cancellation, or new in-flight read can never be shown as verified.
+enum ConfigWorkspaceModelDirectoryState: Equatable {
+    case notRead
+    case reading
+    case completed
+    case cancelled
+}
+
 @MainActor
 protocol ConfigWorkspaceSourceAcquisitionControllerDelegate:
     AnyObject {
@@ -25,6 +35,10 @@ protocol ConfigWorkspaceSourceAcquisitionControllerDelegate:
     var documentText: String { get set }
     var documentStatus: String { get set }
     var isRefreshingDocument: Bool { get set }
+    var baseURL: String { get }
+    var apiKey: String { get }
+    var wireProtocol: RelayWireProtocol { get }
+    var confirmsLocalGateway: Bool { get }
     var modelNames: [String] { get set }
     var modelName: String { get set }
     var modelFetchStatus: String { get set }
@@ -46,14 +60,40 @@ protocol ConfigWorkspaceSourceAcquisitionControllerDelegate:
 /// into ConfigWorkspaceModel's existing observable state.
 @MainActor
 final class ConfigWorkspaceSourceAcquisitionController {
+    typealias ModelFetcher = (String, String, RelayWireProtocol, Bool) async throws -> [RemoteModelRecord]
+
+    private struct ModelInputs: Equatable {
+        let baseURL: String
+        let apiKey: String
+        let wireProtocol: RelayWireProtocol
+        let confirmedLocalGateway: Bool
+
+        @MainActor
+        init(_ delegate: any ConfigWorkspaceSourceAcquisitionControllerDelegate) {
+            baseURL = delegate.baseURL
+            apiKey = delegate.apiKey
+            wireProtocol = delegate.wireProtocol
+            confirmedLocalGateway = delegate.confirmsLocalGateway
+        }
+    }
+
     private weak var delegate:
         (any ConfigWorkspaceSourceAcquisitionControllerDelegate)?
+    private let fetchModels: ModelFetcher
+    private var modelsTask: Task<Void, Never>?
+    private var modelsRequestID: UUID?
+    private var directoryState = ConfigWorkspaceModelDirectoryState.notRead
 
     init(
         delegate:
-            any ConfigWorkspaceSourceAcquisitionControllerDelegate
+            any ConfigWorkspaceSourceAcquisitionControllerDelegate,
+        fetchModels: @escaping ModelFetcher = { baseURL, apiKey, wireProtocol, confirmed in
+            try await ModelCatalogService.fetch(baseURL: baseURL, apiKey: apiKey,
+                wireProtocol: wireProtocol, confirmedLocalGateway: confirmed)
+        }
     ) {
         self.delegate = delegate
+        self.fetchModels = fetchModels
     }
 
     func acquireDocument(urlString: String) {
@@ -72,30 +112,127 @@ final class ConfigWorkspaceSourceAcquisitionController {
         }
     }
 
-    func acquireModels(
-        baseURL: String,
-        apiKey: String,
-        wireProtocol: RelayWireProtocol,
-        confirmedLocalGateway: Bool
-    ) {
-        Task { [weak self] in
+    func acquireModels() {
+        guard let delegate, modelsRequestID == nil else { return }
+        let inputs = ModelInputs(delegate)
+        let requestID = UUID()
+        modelsRequestID = requestID
+        delegate.isFetchingModels = true
+        delegate.modelFetchStatus = "正在安全读取模型列表"
+        delegate.errorMessage = nil
+        directoryState = .reading
+        let fetch = fetchModels
+        modelsTask = Task { [weak self] in
             let outcome: ConfigWorkspaceModelAcquisitionOutcome
             do {
                 outcome = .success(
-                    try await ModelCatalogService.fetch(
-                        baseURL: baseURL,
-                        apiKey: apiKey,
-                        wireProtocol: wireProtocol,
-                        confirmedLocalGateway:
-                            confirmedLocalGateway
-                    )
+                    try await fetch(inputs.baseURL, inputs.apiKey,
+                        inputs.wireProtocol, inputs.confirmedLocalGateway)
                 )
             } catch ModelCatalogError.emptyModels {
                 outcome = .empty
             } catch {
                 outcome = .failure(error.localizedDescription)
             }
-            self?.applyModels(outcome)
+            guard let self, self.modelsRequestID == requestID,
+                  !Task.isCancelled, let delegate = self.delegate else { return }
+            guard inputs == ModelInputs(delegate) else {
+                self.modelInputsDidChange()
+                return
+            }
+            self.modelsRequestID = nil
+            self.modelsTask = nil
+            self.directoryState = .completed
+            self.applyModels(outcome)
+        }
+    }
+
+    func cancelModels() {
+        guard modelsRequestID != nil else { return }
+        modelsRequestID = nil
+        modelsTask?.cancel()
+        modelsTask = nil
+        directoryState = .cancelled
+        delegate?.isFetchingModels = false
+        delegate?.modelFetchStatus = "已取消读取模型；草稿保留，可手动重试。"
+    }
+
+    /// LTP-130: an explicit manual model carries its own evidence. The model
+    /// directory stays a separate discovery, so its outcome must remain
+    /// visible as unverified instead of being reported as passed.
+    func noteManualModelAdded(_ value: String) {
+        guard let delegate else { return }
+        let discoveredCount = delegate.evidence.filter {
+            $0.field == "模型" && $0.source == "中转 /models 接口"
+        }.count
+        delegate.modelFetchStatus = Self.manualModelAddedStatus(
+            value: value,
+            directorySummary: Self.modelDirectorySummary(
+                state: directoryState,
+                discoveredModelCount: discoveredCount,
+                errorMessage: delegate.errorMessage
+            )
+        )
+    }
+
+    /// Derived from the single directory state plus the latest error and the
+    /// catalog evidence the latest completed read produced.
+    static func modelDirectorySummary(
+        state: ConfigWorkspaceModelDirectoryState,
+        discoveredModelCount: Int,
+        errorMessage: String?
+    ) -> String {
+        switch state {
+        case .reading:
+            return "模型目录正在读取；本次结果未出，"
+                + "上次结果不再声明为已验证"
+        case .cancelled:
+            return "模型目录未验证：读取已取消"
+        case .notRead:
+            return "模型目录未读取（不影响手工模型验证）"
+        case .completed:
+            break
+        }
+        if discoveredModelCount > 0 {
+            return "模型目录已读取（\(discoveredModelCount) 个）；"
+                + "未核对该模型是否在列表内"
+        }
+        let reason = errorMessage?.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ) ?? ""
+        guard reason.isEmpty else {
+            return "模型目录未验证：\(reason)"
+        }
+        return "模型目录未验证：接口未返回可识别的模型"
+    }
+
+    static func manualModelAddedStatus(
+        value: String,
+        directorySummary: String
+    ) -> String {
+        "已手动添加模型：\(value)；\(directorySummary)"
+    }
+
+    func modelInputsDidChange() {
+        guard let delegate else { return }
+        let hadEvidence = delegate.evidence.contains {
+            $0.field == "模型" && $0.source == "中转 /models 接口"
+        }
+        guard modelsRequestID != nil
+            || directoryState != .notRead || hadEvidence else { return }
+        cancelModels()
+        directoryState = .notRead
+        removeCatalogEvidence(delegate)
+        delegate.modelFetchStatus = "接入信息已变化；已有模型仅作草稿，请重新读取或手动确认。"
+        delegate.invalidatePreview()
+    }
+
+    /// The catalog evidence describes the latest completed read only.
+    private func removeCatalogEvidence(
+        _ delegate: any ConfigWorkspaceSourceAcquisitionControllerDelegate
+    ) {
+        delegate.evidence.removeAll {
+            $0.field == "模型" && $0.source == "中转 /models 接口"
         }
     }
 
@@ -166,10 +303,7 @@ final class ConfigWorkspaceSourceAcquisitionController {
             }
             delegate.modelFetchStatus =
                 "已拉取 \(records.count) 个模型；API Key 未写入日志或网址"
-            delegate.evidence.removeAll {
-                $0.field == "模型"
-                    && $0.source == "中转 /models 接口"
-            }
+            removeCatalogEvidence(delegate)
             for record in records {
                 delegate.evidence.append(
                     FieldEvidence(
@@ -185,9 +319,13 @@ final class ConfigWorkspaceSourceAcquisitionController {
             delegate.modelFetchStatus =
                 "接口已响应，但未识别到模型；可手动添加"
             delegate.errorMessage = nil
+            removeCatalogEvidence(delegate)
+            delegate.invalidatePreview()
         case let .failure(message):
             delegate.modelFetchStatus = "模型拉取失败"
             delegate.errorMessage = message
+            removeCatalogEvidence(delegate)
+            delegate.invalidatePreview()
         }
         delegate.isFetchingModels = false
     }

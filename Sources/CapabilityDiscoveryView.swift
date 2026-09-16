@@ -4,6 +4,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct CapabilityDiscoveryView: View {
+    @Environment(\.appDisplayTextSize) private var displayTextSize
     @State private var goal = ""
     @State private var analysis: CapabilityGoalAnalysis?
     @State private var isSearching = false
@@ -39,334 +40,7 @@ struct CapabilityDiscoveryView: View {
     private let capabilityCatalogStore = CapabilityCatalogStore()
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("能力中心")
-                        .font(.system(size: 28, weight: .bold))
-                    Text("先告诉我你想完成什么，不需要先知道Skill、Plugin、MCP或Hook名称。")
-                        .foregroundStyle(.secondary)
-                }
-                HStack {
-                    TextField("例如：我想分析Excel并生成图表", text: $goal)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { analyze() }
-                    Button("拆解需求") { analyze() }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                if let analysis {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("需求拆解").font(.headline)
-                        ForEach(analysis.requirements) { requirement in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(requirement.description).fontWeight(.semibold)
-                                Text("候选类型：\(requirement.requiredPackageTypes.map(\.rawValue).joined(separator: "、"))")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        Text("对外搜索只发送这些必要关键词：\(analysis.privacyKeywordsSentToSearch.joined(separator: "、"))")
-                            .font(.caption).foregroundStyle(.secondary)
-                        HStack {
-                            Button {
-                                search(analysis)
-                            } label: {
-                                if isSearching {
-                                    ProgressView().controlSize(.small)
-                                } else {
-                                    Label("联网检索GitHub公开仓库", systemImage: "magnifyingglass")
-                                }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(isSearching)
-                            Button("查看官方Skills与Plugins") {
-                                NSWorkspace.shared.open(
-                                    URL(string: "https://learn.chatgpt.com/docs/skills-and-plugins")!
-                                )
-                            }
-                        }
-                    }
-                    .padding(14)
-                    .background(.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("候选顺序").font(.headline)
-                    Text("1. 当前Agent原生能力\n2. OpenAI或Agent官方能力\n3. 已信任组织和已核验目录\n4. GitHub公开仓库\n5. 用户本地导入")
-                    Text("星标和搜索排名只作参考。候选必须再检查权限、脚本、二进制、OAuth、网络、依赖和卸载清单。")
-                        .foregroundStyle(.secondary)
-                }
-                .font(.callout)
-                .padding(14)
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-
-                if let aggregation {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("官方来源").font(.headline)
-                        ForEach(aggregation.officialReferences) { reference in
-                            HStack(alignment: .top) {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(reference.title).fontWeight(.semibold)
-                                    Text(reference.summary).font(.callout)
-                                    Text(reference.limitation)
-                                        .font(.caption).foregroundStyle(.orange)
-                                }
-                                Spacer()
-                                Link("打开官方文档", destination: reference.documentationURL)
-                            }
-                            .padding(10)
-                            .background(.blue.opacity(0.04), in: RoundedRectangle(cornerRadius: 9))
-                        }
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 9) {
-                    HStack {
-                        Text("可信签名目录").font(.headline)
-                        Spacer()
-                        Button("选择目录JSON") {
-                            capabilityCatalogPackageImporterOpen = true
-                        }
-                        Button("选择发布者公钥") {
-                            capabilityCatalogKeyImporterOpen = true
-                        }
-                    }
-                    Text("目录和公钥必须来自独立渠道。目录只能提供官方或已核验来源，不能把普通GitHub仓库自称可信。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Toggle(
-                        "我已从发布者独立渠道核对Key ID和公钥指纹来源",
-                        isOn: $confirmsCapabilityCatalogKey
-                    )
-                    .toggleStyle(.checkbox)
-                    Button("验签并导入能力目录") { importCapabilityCatalog() }
-                        .disabled(
-                            capabilityCatalogPackageData == nil
-                                || capabilityCatalogKeyData == nil
-                                || !confirmsCapabilityCatalogKey
-                        )
-                    Text(capabilityCatalogStatus)
-                        .font(.caption).foregroundStyle(.secondary)
-                    if let aggregation {
-                        ForEach(aggregation.trustedPackages) { package in
-                            HStack(alignment: .top) {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(package.displayName).fontWeight(.semibold)
-                                    Text(package.summary).font(.callout)
-                                    Text("\(package.type.rawValue) · \(package.version) · \(package.maintainer)")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                    Text("核验：\(package.verificationMethod ?? "未知")")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if let url = package.marketplaceURL ?? package.repositoryURL {
-                                    Link("查看来源", destination: url)
-                                }
-                            }
-                            .padding(10)
-                            .background(.green.opacity(0.04), in: RoundedRectangle(cornerRadius: 9))
-                        }
-                    }
-                }
-                .padding(14)
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-
-                if let searchError {
-                    Label(searchError, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                }
-                ForEach(repositories) { repository in
-                    HStack(alignment: .top) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(repository.fullName).font(.headline)
-                            Text(repository.summary ?? "没有简介")
-                                .font(.callout).foregroundStyle(.secondary)
-                            Text("Stars \(repository.stars) · Forks \(repository.forks) · License \(repository.license ?? "未知")")
-                                .font(.caption).foregroundStyle(.secondary)
-                            Label(repository.initialRiskLabel, systemImage: "shield.lefthalf.filled")
-                                .font(.caption).foregroundStyle(.orange)
-                        }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 6) {
-                            Button("查看证据") {
-                                NSWorkspace.shared.open(repository.repositoryURL)
-                            }
-                            Button {
-                                lockGitHubRepository(repository)
-                            } label: {
-                                if lockingRepositoryIDs.contains(repository.id) {
-                                    ProgressView().controlSize(.small)
-                                } else {
-                                    Text(githubLocks[repository.id] == nil
-                                        ? "锁定Commit/Release" : "已锁定Commit")
-                                }
-                            }
-                            .disabled(
-                                lockingRepositoryIDs.contains(repository.id)
-                                    || githubLocks[repository.id] != nil
-                            )
-                            Button("审查本地下载包") {
-                                selectedRepository = repository
-                                localPackageImporterOpen = true
-                            }
-                            if let lock = githubLocks[repository.id] {
-                                Text(String(lock.commitSHA.prefix(12)))
-                                    .font(.system(.caption, design: .monospaced))
-                                Text(lock.releaseTag ?? "无Release，按Commit锁定")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .padding(14)
-                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-                }
-
-                if let inspection, let installationPlan {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("静态审查与试装计划").font(.headline)
-                        Text("来源：\(selectedRepository?.fullName ?? "用户本地导入")")
-                        Text("文件 \(inspection.relativeFiles.count) 个 · \(inspection.totalBytes) bytes")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Text("内容指纹：\(inspection.treeSHA256)")
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
-                        Label(
-                            inspection.review.riskLevel.localizedName,
-                            systemImage: inspection.review.riskLevel == .high
-                                ? "xmark.octagon.fill" : "checkmark.shield"
-                        )
-                        .foregroundStyle(inspection.review.riskLevel == .high ? Color.red : Color.orange)
-                        if inspection.review.findings.isEmpty {
-                            Text("未发现当前规则可识别的高风险项；这不等于第三方代码绝对安全。")
-                                .font(.caption).foregroundStyle(.secondary)
-                        } else {
-                            ForEach(inspection.review.findings) { finding in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("\(finding.severity.localizedName)：\(finding.explanation)")
-                                        .font(.callout.weight(.semibold))
-                                    Text(finding.evidence)
-                                        .font(.system(.caption, design: .monospaced))
-                                        .textSelection(.enabled)
-                                }
-                            }
-                        }
-                        Text("锁定版本：\(installationPlan.pinnedVersion)")
-                            .font(.caption)
-                        Text("试装只复制到AI接入助手临时目录，不写Skills、MCP、Plugins、Hooks或Agent配置。")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Toggle(
-                            "我已核对来源、文件、风险和卸载清单，同意仅在临时目录试装",
-                            isOn: $confirmsInstallationPlan
-                        )
-                        .toggleStyle(.checkbox)
-                        HStack {
-                            Button("在临时目录试装") {
-                                stageInSandbox(installationPlan, inspection)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(
-                                !confirmsInstallationPlan
-                                    || inspection.review.riskLevel == .high
-                                    || sandboxReceipt != nil
-                                    || (selectedRepository != nil
-                                        && installationPlan.pinnedCommitSHA == nil)
-                            )
-                            if let sandboxReceipt {
-                                Button("撤销临时试装") { rollbackSandbox(sandboxReceipt) }
-                            }
-                        }
-                        if let sandboxStatus {
-                            Text(sandboxStatus).font(.caption).foregroundStyle(.secondary)
-                        }
-                        Divider()
-                        Text("安装到Codex Skills")
-                            .font(.callout.weight(.semibold))
-                        Text(
-                            "目标：\(managedSkillTargetText(for: installationPlan))"
-                        )
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                        Text(
-                            "真实安装会再次显示精确目标和文件数；同名目录不覆盖。卸载只删除本次创建且hash未变化的文件，保留用户后来新增或修改的内容。"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        Button("安装到Codex Skills") {
-                            confirmsRealSkillInstallation = true
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(
-                            !installationPlan.expectedFiles.contains(
-                                "SKILL.md"
-                            )
-                                || inspection.review.riskLevel == .high
-                                || inspection.review.riskLevel == .unknown
-                                || (selectedRepository != nil
-                                    && installationPlan.pinnedCommitSHA == nil)
-                        )
-                        if let managedSkillStatus {
-                            Text(managedSkillStatus)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(14)
-                    .background(.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-                }
-
-                if !managedSkillManifests.isEmpty
-                    || unpersistedSkillManifest != nil {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("AI接入助手管理的Skills")
-                            .font(.headline)
-                        ForEach(
-                            managedSkillManifests,
-                            id: \.transactionID
-                        ) { manifest in
-                            managedSkillRow(manifest)
-                        }
-                        if let unpersistedSkillManifest {
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(
-                                    unpersistedSkillManifest.packageID
-                                )
-                                .fontWeight(.semibold)
-                                Text(
-                                    "文件已安装，但持久回执失败；未自动回滚。仅本页保留恢复清单。"
-                                )
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                                Button(
-                                    "撤销未入账安装",
-                                    role: .destructive
-                                ) {
-                                    uninstallUnpersistedSkill(
-                                        unpersistedSkillManifest
-                                    )
-                                }
-                            }
-                            .padding(10)
-                            .background(
-                                Color.red.opacity(0.05),
-                                in: RoundedRectangle(cornerRadius: 9)
-                            )
-                        }
-                    }
-                    .padding(14)
-                    .background(
-                        Color(nsColor: .controlBackgroundColor),
-                        in: RoundedRectangle(cornerRadius: 12)
-                    )
-                }
-
-                Label(
-                    "真实安装必须再次由用户确认。当前页面不会静默安装Skill、MCP、Plugin、Hook或路由。",
-                    systemImage: "hand.raised.fill"
-                )
-                .foregroundStyle(.orange)
-            }
-            .padding(28)
-            .frame(maxWidth: 1_000, alignment: .leading)
-            .frame(maxWidth: .infinity)
-        }
+        panel(displayTextSize: displayTextSize)
         .fileImporter(
             isPresented: $localPackageImporterOpen,
             allowedContentTypes: [.folder],
@@ -436,6 +110,342 @@ struct CapabilityDiscoveryView: View {
             loadCapabilityCatalog()
             loadManagedSkills()
         }
+    }
+
+    func panel(displayTextSize: AppDisplayTextSize) -> some View {
+        GeometryReader { geometry in
+            let compact = geometry.size.width < 640
+            let rowLayout = compact
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+                : AnyLayout(HStackLayout(alignment: .top, spacing: 10))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("能力中心")
+                            .font(.system(size: 28, weight: .bold))
+                        Text("先告诉我你想完成什么，不需要先知道Skill、Plugin、MCP或Hook名称。")
+                            .foregroundStyle(.secondary)
+                    }
+                    rowLayout {
+                        TextField("例如：我想分析Excel并生成图表", text: $goal)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { analyze() }
+                        Button("拆解需求") { analyze() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(goal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    if let analysis {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("需求拆解").font(.headline)
+                            ForEach(analysis.requirements) { requirement in
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(requirement.description).fontWeight(.semibold)
+                                    Text("候选类型：\(requirement.requiredPackageTypes.map(\.rawValue).joined(separator: "、"))")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            Text("对外搜索只发送这些必要关键词：\(analysis.privacyKeywordsSentToSearch.joined(separator: "、"))")
+                                .font(.caption).foregroundStyle(.secondary)
+                            rowLayout {
+                                Button {
+                                    search(analysis)
+                                } label: {
+                                    if isSearching {
+                                        ProgressView().controlSize(.small)
+                                    } else {
+                                        Label("联网检索GitHub公开仓库", systemImage: "magnifyingglass")
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(isSearching)
+                                Button("查看官方Skills与Plugins") {
+                                    NSWorkspace.shared.open(
+                                        URL(string: "https://learn.chatgpt.com/docs/skills-and-plugins")!
+                                    )
+                                }
+                            }
+                        }
+                        .padding(14)
+                        .background(.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("候选顺序").font(.headline)
+                        Text("1. 当前Agent原生能力\n2. OpenAI或Agent官方能力\n3. 已信任组织和已核验目录\n4. GitHub公开仓库\n5. 用户本地导入")
+                        Text("星标和搜索排名只作参考。候选必须再检查权限、脚本、二进制、OAuth、网络、依赖和卸载清单。")
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.callout)
+                    .padding(14)
+                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+
+                    if let aggregation {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("官方来源").font(.headline)
+                            ForEach(aggregation.officialReferences) { reference in
+                                rowLayout {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(reference.title).fontWeight(.semibold)
+                                        Text(reference.summary).font(.callout)
+                                        Text(reference.limitation)
+                                            .font(.caption).foregroundStyle(.orange)
+                                    }
+                                    Link("打开官方文档", destination: reference.documentationURL)
+                                }
+                                .padding(10)
+                                .background(.blue.opacity(0.04), in: RoundedRectangle(cornerRadius: 9))
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 9) {
+                        rowLayout {
+                            Text("可信签名目录").font(.headline)
+                            Button("选择目录JSON") {
+                                capabilityCatalogPackageImporterOpen = true
+                            }
+                            Button("选择发布者公钥") {
+                                capabilityCatalogKeyImporterOpen = true
+                            }
+                        }
+                        Text("目录和公钥必须来自独立渠道。目录只能提供官方或已核验来源，不能把普通GitHub仓库自称可信。")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Toggle(
+                            "我已从发布者独立渠道核对Key ID和公钥指纹来源",
+                            isOn: $confirmsCapabilityCatalogKey
+                        )
+                        .toggleStyle(.checkbox)
+                        Button("验签并导入能力目录") { importCapabilityCatalog() }
+                            .disabled(
+                                capabilityCatalogPackageData == nil
+                                    || capabilityCatalogKeyData == nil
+                                    || !confirmsCapabilityCatalogKey
+                            )
+                        Text(capabilityCatalogStatus)
+                            .font(.caption).foregroundStyle(.secondary)
+                        if let aggregation {
+                            ForEach(aggregation.trustedPackages) { package in
+                                rowLayout {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(package.displayName).fontWeight(.semibold)
+                                        Text(package.summary).font(.callout)
+                                        Text("\(package.type.rawValue) · \(package.version) · \(package.maintainer)")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                        Text("核验：\(package.verificationMethod ?? "未知")")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    if let url = package.marketplaceURL ?? package.repositoryURL {
+                                        Link("查看来源", destination: url)
+                                    }
+                                }
+                                .padding(10)
+                                .background(.green.opacity(0.04), in: RoundedRectangle(cornerRadius: 9))
+                            }
+                        }
+                    }
+                    .padding(14)
+                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+
+                    if let searchError {
+                        Label(searchError, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                    }
+                    ForEach(repositories) { repository in
+                        rowLayout {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(repository.fullName).font(.headline)
+                                Text(repository.summary ?? "没有简介")
+                                    .font(.callout).foregroundStyle(.secondary)
+                                Text("Stars \(repository.stars) · Forks \(repository.forks) · License \(repository.license ?? "未知")")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Label(repository.initialRiskLabel, systemImage: "shield.lefthalf.filled")
+                                    .font(.caption).foregroundStyle(.orange)
+                            }
+                            VStack(alignment: .leading, spacing: 6) {
+                                Button("查看证据") {
+                                    NSWorkspace.shared.open(repository.repositoryURL)
+                                }
+                                Button {
+                                    lockGitHubRepository(repository)
+                                } label: {
+                                    if lockingRepositoryIDs.contains(repository.id) {
+                                        ProgressView().controlSize(.small)
+                                    } else {
+                                        Text(githubLocks[repository.id] == nil
+                                            ? "锁定Commit/Release" : "已锁定Commit")
+                                    }
+                                }
+                                .disabled(
+                                    lockingRepositoryIDs.contains(repository.id)
+                                        || githubLocks[repository.id] != nil
+                                )
+                                Button("审查本地下载包") {
+                                    selectedRepository = repository
+                                    localPackageImporterOpen = true
+                                }
+                                if let lock = githubLocks[repository.id] {
+                                    Text(String(lock.commitSHA.prefix(12)))
+                                        .font(.system(.caption, design: .monospaced))
+                                    Text(lock.releaseTag ?? "无Release，按Commit锁定")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .padding(14)
+                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+                    }
+
+                    if let inspection, let installationPlan {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("静态审查与试装计划").font(.headline)
+                            Text("来源：\(selectedRepository?.fullName ?? "用户本地导入")")
+                            Text("文件 \(inspection.relativeFiles.count) 个 · \(inspection.totalBytes) bytes")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text("内容指纹：\(inspection.treeSHA256)")
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                            Label(
+                                inspection.review.riskLevel.localizedName,
+                                systemImage: inspection.review.riskLevel == .high
+                                    ? "xmark.octagon.fill" : "checkmark.shield"
+                            )
+                            .foregroundStyle(inspection.review.riskLevel == .high ? Color.red : Color.orange)
+                            if inspection.review.findings.isEmpty {
+                                Text("未发现当前规则可识别的高风险项；这不等于第三方代码绝对安全。")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                ForEach(inspection.review.findings) { finding in
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("\(finding.severity.localizedName)：\(finding.explanation)")
+                                            .font(.callout.weight(.semibold))
+                                        Text(finding.evidence)
+                                            .font(.system(.caption, design: .monospaced))
+                                            .textSelection(.enabled)
+                                    }
+                                }
+                            }
+                            Text("锁定版本：\(installationPlan.pinnedVersion)")
+                                .font(.caption)
+                            Text("试装只复制到AI接入助手临时目录，不写Skills、MCP、Plugins、Hooks或Agent配置。")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Toggle(
+                                "我已核对来源、文件、风险和卸载清单，同意仅在临时目录试装",
+                                isOn: $confirmsInstallationPlan
+                            )
+                            .toggleStyle(.checkbox)
+                            rowLayout {
+                                Button("在临时目录试装") {
+                                    stageInSandbox(installationPlan, inspection)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(
+                                    !confirmsInstallationPlan
+                                        || inspection.review.riskLevel == .high
+                                        || sandboxReceipt != nil
+                                        || (selectedRepository != nil
+                                            && installationPlan.pinnedCommitSHA == nil)
+                                )
+                                if let sandboxReceipt {
+                                    Button("撤销临时试装") { rollbackSandbox(sandboxReceipt) }
+                                }
+                            }
+                            if let sandboxStatus {
+                                Text(sandboxStatus).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Divider()
+                            Text("安装到Codex Skills")
+                                .font(.callout.weight(.semibold))
+                            Text(
+                                "目标：\(managedSkillTargetText(for: installationPlan))"
+                            )
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            Text(
+                                "真实安装会再次显示精确目标和文件数；同名目录不覆盖。卸载只删除本次创建且hash未变化的文件，保留用户后来新增或修改的内容。"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            Button("安装到Codex Skills") {
+                                confirmsRealSkillInstallation = true
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(
+                                !installationPlan.expectedFiles.contains(
+                                    "SKILL.md"
+                                )
+                                    || inspection.review.riskLevel == .high
+                                    || inspection.review.riskLevel == .unknown
+                                    || (selectedRepository != nil
+                                        && installationPlan.pinnedCommitSHA == nil)
+                            )
+                            if let managedSkillStatus {
+                                Text(managedSkillStatus)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(14)
+                        .background(.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                    }
+
+                    if !managedSkillManifests.isEmpty
+                        || unpersistedSkillManifest != nil {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("AI接入助手管理的Skills")
+                                .font(.headline)
+                            ForEach(
+                                managedSkillManifests,
+                                id: \.transactionID
+                            ) { manifest in
+                                managedSkillRow(manifest, rowLayout: rowLayout)
+                            }
+                            if let unpersistedSkillManifest {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text(
+                                        unpersistedSkillManifest.packageID
+                                    )
+                                    .fontWeight(.semibold)
+                                    Text(
+                                        "文件已安装，但持久回执失败；未自动回滚。仅本页保留恢复清单。"
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                                    Button(
+                                        "撤销未入账安装",
+                                        role: .destructive
+                                    ) {
+                                        uninstallUnpersistedSkill(
+                                            unpersistedSkillManifest
+                                        )
+                                    }
+                                }
+                                .padding(10)
+                                .background(
+                                    Color.red.opacity(0.05),
+                                    in: RoundedRectangle(cornerRadius: 9)
+                                )
+                            }
+                        }
+                        .padding(14)
+                        .background(
+                            Color(nsColor: .controlBackgroundColor),
+                            in: RoundedRectangle(cornerRadius: 12)
+                        )
+                    }
+
+                    Label(
+                        "真实安装必须再次由用户确认。当前页面不会静默安装Skill、MCP、Plugin、Hook或路由。",
+                        systemImage: "hand.raised.fill"
+                    )
+                    .foregroundStyle(.orange)
+                }
+                .padding(28)
+                .frame(maxWidth: 1_000, alignment: .leading)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .appDisplayScale(displayTextSize)
+        .frame(minWidth: 520, idealWidth: 900, maxWidth: 1100,
+               minHeight: 440, idealHeight: 680, maxHeight: 860)
     }
 
     private func analyze() {
@@ -549,9 +559,10 @@ struct CapabilityDiscoveryView: View {
 
     @ViewBuilder
     private func managedSkillRow(
-        _ manifest: CapabilityInstalledManifest
+        _ manifest: CapabilityInstalledManifest,
+        rowLayout: AnyLayout
     ) -> some View {
-        HStack(alignment: .top) {
+        rowLayout {
             VStack(alignment: .leading, spacing: 3) {
                 Text(manifest.packageID)
                     .fontWeight(.semibold)
@@ -568,7 +579,6 @@ struct CapabilityDiscoveryView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
-            Spacer()
             Button("卸载", role: .destructive) {
                 pendingManagedSkillUninstall = manifest
                 confirmsManagedSkillUninstall = true

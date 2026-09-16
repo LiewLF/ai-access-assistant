@@ -9,9 +9,12 @@ struct V012UsageScanResult: Sendable {
     let turns: [V012CompletedTurnUsage]
     let changedSourceCount: Int
     let readSourceCount: Int
+    let overflowed: Bool
 }
 
 actor V012UsageScanCoordinator {
+    static let maximumTurns = 2_000
+
     typealias IdentityReader = @Sendable (URL) throws
         -> SessionRolloutSnapshot
     typealias UsageReader = @Sendable (URL, String) throws
@@ -46,6 +49,7 @@ actor V012UsageScanCoordinator {
         var values: [V012CompletedTurnUsage] = []
         var changed = 0
         var read = 0
+        var overflowed = false
         var activePaths = Set<String>()
 
         for source in sources {
@@ -64,6 +68,7 @@ actor V012UsageScanCoordinator {
             let after = try identityReader(source.url)
             read += 1
             values.append(contentsOf: result.turns)
+            if result.overflowed { overflowed = true }
             if result.sourceChangedDuringRead || before != after {
                 changed += 1
                 cache.removeValue(forKey: path)
@@ -82,10 +87,12 @@ actor V012UsageScanCoordinator {
                 lhs.completedAt >= rhs.completedAt ? lhs : rhs
             }
         ).values.sorted { $0.completedAt > $1.completedAt }
+        if unique.count > Self.maximumTurns { overflowed = true }
         return V012UsageScanResult(
-            turns: Array(unique.prefix(80)),
+            turns: Array(unique.prefix(Self.maximumTurns)),
             changedSourceCount: changed,
-            readSourceCount: read
+            readSourceCount: read,
+            overflowed: overflowed
         )
     }
 }

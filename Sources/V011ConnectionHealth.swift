@@ -47,6 +47,18 @@ enum V011ConnectionHealthFailureCategory:
     case networkTimedOut
     case networkUnavailable
     case invalidResponse
+    /// LTP-140: the response arrived but the bounded probe hit its own
+    /// 8 token budget. Kept apart from rate limits and account quota.
+    case probeBudgetExhausted
+    /// The probe was cancelled before it completed.
+    case probeCancelled
+    /// The model explicitly refused the minimal request.
+    case probeRefused
+    /// A response arrived without a recognizable normal end.
+    case probeMissingCompletion
+    /// The response carried no visible text (for example reasoning or tool
+    /// content only) at a recognized normal end.
+    case probeNoVisibleText
     case unknown
 }
 
@@ -408,6 +420,11 @@ enum V011ConnectionHealthAnalyzer {
                 switch observation.failureCategory {
                 case .rateLimited,
                         .upstreamUnavailable,
+                        .probeBudgetExhausted,
+                        .probeCancelled,
+                        .probeRefused,
+                        .probeMissingCompletion,
+                        .probeNoVisibleText,
                         .networkSecureConnectionFailed,
                         .networkTimedOut,
                         .networkUnavailable:
@@ -436,17 +453,11 @@ enum V011ConnectionHealthAnalyzer {
                     .unavailable:
                 return .refreshCurrentState
             case .sessionProviderDrift:
-                return .reopenCodex
+                break
             }
         }
-        switch observation.sessionProviderCheck {
-        case .drifted:
-            return .reopenCodex
-        case .unavailable:
-            return .refreshCurrentState
-        case .synchronized, nil:
-            break
-        }
+        // Historical provider labels do not establish a running task's route.
+        // Runtime age and actual probe failures keep their separate guidance.
         switch observation.runtimeState {
         case .stale:
             return .reopenCodex

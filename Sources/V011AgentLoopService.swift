@@ -2,16 +2,23 @@ import Foundation
 
 struct V011AgentLoopVerificationResult: @unchecked Sendable {
     let probeResult: V011AgentLoopProbeResult
-    let matchesCurrent: Bool
+    let currentState: V011AccessStateSnapshot
+
+    var matchesCurrent: Bool {
+        currentState.agentLoopMatches && !currentState.pending
+            && currentState.agentLoopReceipt == probeResult.receipt
+    }
 }
 
 /// Owns real-task verification and durable receipt matching.
 struct V011AgentLoopService: @unchecked Sendable {
+    private let dependencies: V011AccessDependencies
     private let verifier: any V011AgentLoopVerifying
     private let now: @Sendable () -> Date
     let receiptStore: V011AgentLoopReceiptStore
 
     init(dependencies: V011AccessDependencies) {
+        self.dependencies = dependencies
         verifier = dependencies.agentLoopVerifier
         now = dependencies.now
         receiptStore = V011AgentLoopReceiptStore(
@@ -24,25 +31,32 @@ struct V011AgentLoopService: @unchecked Sendable {
     func verify(
         live: LiveCodexState
     ) async throws -> V011AgentLoopVerificationResult {
-        let expectedProviderID =
-            V011ConnectionHealthService.providerID(live)
-        let expectedConfigHash = live.configHash
+        guard let expectedRouteIdentity =
+                V011AgentLoopRouteIdentity(live: live),
+              expectedRouteIdentity.modelID != nil else {
+            throw V011AgentLoopVerificationError
+                .unsafeConfiguration
+        }
         return try await Task.detached(
             priority: .userInitiated
         ) {
             let result = try verifier.verify(
                 userConsented: true,
-                expectedProviderID: expectedProviderID,
-                expectedConfigHash: expectedConfigHash
+                expectedRouteIdentity: expectedRouteIdentity
             )
             try receiptStore.commit(result.receipt)
+            // The caller can still hold the passive startup version marker.
+            // Match the stored result against freshly discovered local state,
+            // preserving the same route/runtime/expiry and recovery guards.
+            let recovery = try V011AccessStateReader.pendingRecoveryContext(
+                dependencies: dependencies
+            )
+            let currentState = try V011AccessStateReader.readState(
+                dependencies: dependencies, pending: recovery.pending
+            )
             return V011AgentLoopVerificationResult(
                 probeResult: result,
-                matchesCurrent: verifier.receiptMatchesCurrent(
-                    result.receipt,
-                    live: live,
-                    now: now()
-                )
+                currentState: currentState
             )
         }.value
     }
@@ -53,14 +67,6 @@ struct V011AgentLoopService: @unchecked Sendable {
     ) -> Bool {
         receipt.isStructurallyValid
             && receipt.expiresAt > now()
-            && receipt.configHash == live.configHash
-            && receipt.providerID
-                == V011ConnectionHealthService.providerID(live)
-            && receipt.endpointHost
-                == V011AgentLoopReceipt.endpointHost(live)
-            && receipt.modelID == live.model
-            && receipt.codexAppVersion == live.version.appVersion
-            && receipt.codexAppBuild == live.version.appBuild
-            && receipt.codexCLIVersion == live.version.cliVersion
+            && receipt.targets(live)
     }
 }

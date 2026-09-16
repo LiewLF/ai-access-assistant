@@ -73,11 +73,7 @@ struct V011CurrentConnectionActionService: @unchecked Sendable {
                 outcome: check.isVerified ? .passed : .degraded,
                 failureCode: check.isVerified
                     ? nil
-                    : (
-                        check.sessionIsCurrent
-                            ? .receiptMismatch
-                            : .sessionProviderDrift
-                    ),
+                    : .receiptMismatch,
                 sessionProviderCheck: result.sessionProviderCheck,
                 runtimeFreshness: check.runtimeFreshness
             )
@@ -156,11 +152,6 @@ struct V011CurrentConnectionActionService: @unchecked Sendable {
             return hasPendingRecovery
                 ? "连接已通过；当前任务保持旧设置，且上次操作仍未完成"
                 : "连接已通过；当前已打开任务可能保持旧设置"
-        }
-        if !check.sessionIsCurrent {
-            return hasPendingRecovery
-                ? "最小请求已通过；任务路由未确认，且上次操作仍未完成"
-                : "最小请求已通过；任务路由尚未确认"
         }
         if check.runtimeFreshness == .unknown {
             return hasPendingRecovery

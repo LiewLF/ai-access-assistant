@@ -121,14 +121,11 @@ enum V011AccessStateReader {
                 runtimeObservation:
                     dependencies.codexRuntimeObservation()
             )
-        let verified = receiptMatches
-            && connectionReceipt?.sessionProviderCheck
-                == .synchronized
         return V011AccessStateSnapshot(
             managed: state,
             live: live,
             pending: pending,
-            verified: verified,
+            verified: receiptMatches,
             connectionReceipt: connectionReceipt,
             receiptMatches: receiptMatches,
             agentLoopReceipt: agentLoopReceipt,
@@ -149,29 +146,33 @@ enum V011AccessStateReader {
     }
 
     static func pendingRecoveryContext(
-        dependencies: V011AccessDependencies
+        dependencies: V011AccessDependencies,
+        passive: Bool = false
     ) throws -> V011PendingRecoveryContext {
-        let switchPending = try V011SwitchJournalStore(
+        let switchStore = V011SwitchJournalStore(
             rootURL: dependencies.controlRoot
                 .appendingPathComponent(
                     "SwitchTransactions",
                     isDirectory: true
                 )
-        ).pending()
-        let adoptionPending = try V011AdoptionJournalStore(
+        )
+        let switchPending = try (passive ? switchStore.pendingReadOnly() : switchStore.pending())
+        let adoptionStore = V011AdoptionJournalStore(
             rootURL: dependencies.controlRoot
                 .appendingPathComponent(
                     "AdoptionTransactions",
                     isDirectory: true
                 )
-        ).pending()
-        let deletionPending = try V011RelayDeletionJournalStore(
+        )
+        let adoptionPending = try (passive ? adoptionStore.pendingReadOnly() : adoptionStore.pending())
+        let deletionStore = V011RelayDeletionJournalStore(
             rootURL: dependencies.controlRoot
                 .appendingPathComponent(
                     "RelayDeletionTransactions",
                     isDirectory: true
                 )
-        ).pending()
+        )
+        let deletionPending = try (passive ? deletionStore.pendingReadOnly() : deletionStore.pending())
         let failure = switchPending
             .filter { $0.phase == .rollbackFailed }
             .max { $0.updatedAt < $1.updatedAt }
@@ -190,7 +191,11 @@ enum V011AccessStateReader {
             $0.updatedAt < $1.updatedAt
         }
         var switchDisposition: V011RecoveryDisposition = .none
-        if !switchPending.isEmpty {
+        var configurationPreviews: [String: V014RecoveryFieldPreview] = [:]
+        var configurationPreviewBindings: [String] = []
+        // Startup reads journal facts only. Recoverability requires the later
+        // explicit read, which may inspect the encrypted snapshot and version.
+        if !switchPending.isEmpty && !passive {
             let coordinator = V011UnifiedSwitchCoordinator(
                 codexHome: dependencies.codexHome,
                 controlRoot: dependencies.controlRoot,
@@ -210,7 +215,11 @@ enum V011AccessStateReader {
             )
             do {
                 switchDisposition = try coordinator
-                    .recoveryDisposition()
+                    .recoveryDisposition { id, prepared in
+                        configurationPreviews[id] = V014RecoveryConfigurationPreview.read(prepared)
+                        configurationPreviewBindings.append(
+                            "configuration:\(id):\(prepared.expectedCurrentHash ?? "absent")")
+                    }
             } catch {
                 switchDisposition = .decisionRequired
                 detail = [
@@ -225,7 +234,8 @@ enum V011AccessStateReader {
             || !adoptionPending.isEmpty
             || !deletionPending.isEmpty
         let disposition: V011RecoveryDisposition =
-            switchDisposition == .decisionRequired
+            passive && hasPending ? .unread
+                : switchDisposition == .decisionRequired
                 ? .decisionRequired
                 : (hasPending ? .recoverable : .none)
         let fingerprintParts = switchPending.map {
@@ -235,11 +245,12 @@ enum V011AccessStateReader {
         } + deletionPending.map {
             "deletion:\($0.id):\($0.phase.rawValue):\($0.updatedAt.timeIntervalSinceReferenceDate)"
         }
+        let boundFingerprintParts = fingerprintParts + configurationPreviewBindings
         let preview = hasPending
             ? V014RecoveryRepairPreview(
                 fingerprint: TOMLSemanticEngine.sha256(
                     Data(
-                        fingerprintParts
+                        boundFingerprintParts
                             .sorted()
                             .joined(separator: "\n")
                             .utf8
@@ -249,7 +260,10 @@ enum V011AccessStateReader {
                 adoptionCount: adoptionPending.count,
                 deletionCount: deletionPending.count,
                 protectsNewSessions:
-                    latestSwitch?.protectsPostSwitchSessions == true
+                    latestSwitch?.protectsPostSwitchSessions == true,
+                operationImpacts: V014RecoveryImpactPreview.operations(
+                    switches: switchPending, adoptions: adoptionPending,
+                    deletions: deletionPending, configurationPreviews: configurationPreviews)
             )
             : nil
         return V011PendingRecoveryContext(

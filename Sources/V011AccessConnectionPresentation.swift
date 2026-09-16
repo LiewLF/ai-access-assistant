@@ -66,9 +66,36 @@ struct V011AccessConnectionPresentation: @unchecked Sendable {
                 )
             }
         )
+        if let unsavedCurrentProviderDescriptor {
+            descriptors.append(unsavedCurrentProviderDescriptor)
+        }
         return V011ConnectionHealthAnalyzer.providerSummaries(
             connectionHealthHistory,
             descriptors: descriptors
+        )
+    }
+
+    /// The live route can point at a relay that no saved profile covers, for
+    /// example a hand-edited configuration. History for that provider still
+    /// belongs to the current route, so it needs a current descriptor; without
+    /// one the failure would be filed as a historical provider that is not
+    /// the route the user is on.
+    private var unsavedCurrentProviderDescriptor:
+        V011ConnectionHealthProviderDescriptor? {
+        guard let liveState,
+              case let .relay(providerID) = liveState.mode,
+              !managedState.relayProfiles.contains(where: {
+                  $0.v011ProviderID == providerID
+              }) else { return nil }
+        let actualName = (liveState.provider?.displayName ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return V011ConnectionHealthProviderDescriptor(
+            providerID: providerID,
+            displayName: actualName.isEmpty
+                ? "当前中转（未保存）" : "\(actualName)（未保存）",
+            savedModelCount: nil,
+            defaultModelPresent: nil,
+            isCurrent: true
         )
     }
 
@@ -79,11 +106,38 @@ struct V011AccessConnectionPresentation: @unchecked Sendable {
         })?.latestObservation
     }
 
+    private var currentConnectionEvidenceObservation:
+        V011ConnectionHealthObservation? {
+        guard let liveState,
+              let observation = currentConnectionHealthObservation,
+              V011ConnectionHealthService.observationMatches(
+                  observation,
+                  live: liveState,
+                  receipt: currentConnectionReceipt,
+                  at: now
+              ) else { return nil }
+        return observation
+    }
+
+    var currentConnectionFailurePresentation: V013FailurePresentation? {
+        guard let observation = currentConnectionEvidenceObservation else {
+            return nil
+        }
+        // Older builds saved a successful probe as degraded when unrelated
+        // historical tasks had other provider labels. Preserve that record,
+        // but do not project it as a current connection failure.
+        if observation.outcome == .degraded,
+           observation.failureCode == .sessionProviderDrift {
+            return nil
+        }
+        return V013FailurePresentation.connection(observation)
+    }
+
     var currentConnectionRescueAdvice: V011ConnectionHealthAdvice {
         V011ConnectionHealthAnalyzer.rescueAdvice(
             hasPendingRecovery: hasPendingRecovery,
             needsRelayAdoption: needsCurrentRelayAdoption,
-            latestObservation: currentConnectionHealthObservation
+            latestObservation: currentConnectionEvidenceObservation
         )
     }
 
@@ -166,7 +220,7 @@ struct V011AccessConnectionPresentation: @unchecked Sendable {
         if let agentLoopReceipt,
            agentLoopReceiptTargetsCurrentState,
            let stage = agentLoopReceipt.failureStage {
-            let failure = V013FailurePresentation.agentLoop(stage)
+            let failure = V013FailurePresentation.agentLoop(stage, reason: agentLoopReceipt.failureReason)
             return "\(failure.conclusion)：\(failure.explanation) 下一步：\(failure.primaryAction.title)。"
         }
         if hasFreshConnectionReceipt {
@@ -184,12 +238,14 @@ struct V011AccessConnectionPresentation: @unchecked Sendable {
         }
         if hasFreshConnectionReceipt,
            currentSessionProviderCheck != .synchronized {
-            return "最小请求已通过 · 任务路由未确认"
+            return currentSessionProviderCheck == .drifted
+                ? "最小请求已通过 · 历史任务保留其他接入标签"
+                : "最小请求已通过 · 历史任务标签尚未核对"
         }
         if isCurrentConnectionVerified,
            let checkedAt = currentConnectionReceipt?.verifiedAt {
             if currentRuntimeFreshness == .stale {
-                return "已通过 · 当前已打开任务保持旧设置"
+                return "已通过 · 已打开任务是否采用新设置未验证"
             }
             if currentRuntimeFreshness == .unknown {
                 return "已通过 · 当前任务生效状态未确认"
@@ -218,11 +274,11 @@ struct V011AccessConnectionPresentation: @unchecked Sendable {
     var currentSessionProviderCheckText: String {
         switch currentSessionProviderCheck {
         case .synchronized:
-            return "任务列表已同步"
+            return "历史任务标签与当前接入一致"
         case .drifted:
-            return "任务列表发现旧标签"
+            return "历史任务保留其他接入标签"
         case .unavailable:
-            return "任务列表暂时无法核对"
+            return "历史任务标签暂时无法核对"
         case nil:
             return "尚未核对"
         }
@@ -231,7 +287,7 @@ struct V011AccessConnectionPresentation: @unchecked Sendable {
     var currentConnectionWarning: String? {
         if hasFreshConnectionReceipt,
            currentRuntimeFreshness == .stale {
-            return "连接检测已通过，不必为检测退出Codex。当前已打开任务仍可能使用旧设置；切轨时助手会安全重开，同轨设置则在快速重开后生效。"
+            return "基础连接已通过；Codex运行实例早于当前配置，已打开任务是否采用新设置尚未验证。历史任务标签不能证明实际请求路由。"
         }
         if hasFreshConnectionReceipt,
            currentRuntimeFreshness == .unknown {
@@ -242,9 +298,9 @@ struct V011AccessConnectionPresentation: @unchecked Sendable {
         }
         switch currentSessionProviderCheck {
         case .drifted:
-            return "连接可用，但部分旧任务仍保留其他Provider；请重开Codex或新建任务后再判断实际路由。"
+            return "历史任务保留其他接入标签，这是历史记录差异，不表示当前请求使用旧线路；无需为此改写历史或重启Codex。"
         case .unavailable:
-            return "连接已通过，但任务Provider标签暂时无法核对；已打开的旧任务可能仍保留旧路由。"
+            return "历史任务标签暂时无法核对；这不改变基础连接结果，当前任务能力仍需独立验证。"
         case .synchronized, nil:
             break
         }

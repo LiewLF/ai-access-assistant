@@ -37,9 +37,9 @@ struct V013OfficialPricingRate: Codable, Equatable, Identifiable {
 }
 
 /// Immutable, versioned official rate-card snapshot. Subscription credits and
-/// API-equivalent USD share one revision but remain separate quantities.
+/// API-equivalent USD share one explicit source set but remain separate values.
 struct V013OfficialPricingSnapshot: Codable, Equatable, Identifiable {
-    static let schemaVersion = 1
+    static let schemaVersion = 2
 
     let version: Int
     let effectiveAt: Date
@@ -51,9 +51,10 @@ struct V013OfficialPricingSnapshot: Codable, Equatable, Identifiable {
     let apiSourceURL: String
     let speedSourceURL: String
     let rates: [V013OfficialPricingRate]
-    let revision: String
 
-    var id: String { revision }
+    var id: String {
+        "official-pricing-\(Int(effectiveAt.timeIntervalSince1970))"
+    }
 
     var effectiveCreditsCheckedAt: Date {
         creditsCheckedAt ?? checkedAt
@@ -77,8 +78,7 @@ struct V013OfficialPricingSnapshot: Codable, Equatable, Identifiable {
         subscriptionSourceURL: String,
         apiSourceURL: String,
         speedSourceURL: String,
-        rates: [V013OfficialPricingRate],
-        revision: String
+        rates: [V013OfficialPricingRate]
     ) {
         self.version = version
         self.effectiveAt = effectiveAt
@@ -90,7 +90,6 @@ struct V013OfficialPricingSnapshot: Codable, Equatable, Identifiable {
         self.apiSourceURL = apiSourceURL
         self.speedSourceURL = speedSourceURL
         self.rates = rates
-        self.revision = revision
     }
 
     var isStructurallyValid: Bool {
@@ -117,10 +116,11 @@ struct V013OfficialPricingSnapshot: Codable, Equatable, Identifiable {
             && rates.count <= 64
             && rates.allSatisfy(\.isStructurallyValid)
             && Set(rates.map(\.id)).count == rates.count
-            && revision.count == 64
-            && revision.allSatisfy {
-                $0.isHexDigit && !$0.isUppercase
-            }
+    }
+
+    func hasSamePricing(as other: Self) -> Bool {
+        rates.sorted { $0.id < $1.id }
+            == other.rates.sorted { $0.id < $1.id }
     }
 
     func rate(
@@ -151,7 +151,7 @@ struct V013OfficialPricingSnapshot: Codable, Equatable, Identifiable {
         checkedAt: Date,
         fastMultiplier: Double = 2
     ) -> Self? {
-        guard prices.count == 3,
+        guard Set(prices.keys) == Set(rates.map(\.model)),
               fastMultiplier.isFinite,
               fastMultiplier > 0 else { return nil }
         let updated = rates.compactMap { current -> V013OfficialPricingRate? in
@@ -181,14 +181,10 @@ struct V013OfficialPricingSnapshot: Codable, Equatable, Identifiable {
             )
         }
         guard updated.count == rates.count else { return nil }
+        let pricingUnchanged = updated == rates
         let value = Self(
             version: version,
-            effectiveAt: revision == Self.revision(
-                rates: updated,
-                subscriptionSourceURL: subscriptionSourceURL,
-                apiSourceURL: apiSourceURL,
-                speedSourceURL: speedSourceURL
-            ) ? effectiveAt : checkedAt,
+            effectiveAt: pricingUnchanged ? effectiveAt : checkedAt,
             checkedAt: checkedAt,
             creditsCheckedAt: effectiveCreditsCheckedAt,
             apiCheckedAt: checkedAt,
@@ -196,25 +192,20 @@ struct V013OfficialPricingSnapshot: Codable, Equatable, Identifiable {
             subscriptionSourceURL: subscriptionSourceURL,
             apiSourceURL: apiSourceURL,
             speedSourceURL: speedSourceURL,
-            rates: updated,
-            revision: Self.revision(
-                rates: updated,
-                subscriptionSourceURL: subscriptionSourceURL,
-                apiSourceURL: apiSourceURL,
-                speedSourceURL: speedSourceURL
-            )
+            rates: updated
         )
         return value.isStructurallyValid ? value : nil
     }
 
     static let current: Self = {
         let checkedAt = ISO8601DateFormatter().date(
-            from: "2026-08-25T00:00:00Z"
+            from: "2026-09-04T22:31:03Z"
         )!
         let effectiveAt = ISO8601DateFormatter().date(
-            from: "2026-08-21T00:00:00Z"
+            from: "2026-09-04T22:31:03Z"
         )!
         let standard: [(String, Double, Double, Double, Double, Double, Double)] = [
+            ("gpt-6-astra", 250, 25, 1250, 10, 1, 50),
             ("gpt-5.6-sol", 100, 10, 500, 4, 0.4, 20),
             ("gpt-5.6-terra", 50, 5, 300, 2, 0.2, 12),
             ("gpt-5.6-luna", 5, 0.5, 30, 0.2, 0.02, 1.2),
@@ -246,27 +237,22 @@ struct V013OfficialPricingSnapshot: Codable, Equatable, Identifiable {
                 )
             )
         }
-        let source = "https://help.openai.com/en/articles/11481834"
+        let source = "https://learn.chatgpt.com/docs/pricing"
         let api = "https://developers.openai.com/api/docs/models/compare"
         let speed = "https://developers.openai.com/codex/speed"
-        let revision = Self.revision(
-            rates: rates,
-            subscriptionSourceURL: source,
-            apiSourceURL: api,
-            speedSourceURL: speed
-        )
         return Self(
             version: schemaVersion,
             effectiveAt: effectiveAt,
             checkedAt: checkedAt,
             creditsCheckedAt: checkedAt,
-            apiCheckedAt: checkedAt,
-            speedCheckedAt: checkedAt,
+            // Astra was checked on Sep 5; unchanged models keep their older
+            // API/Speed verification floor. Do not claim a full catalog refresh.
+            apiCheckedAt: ISO8601DateFormatter().date(from: "2026-08-25T00:00:00Z")!,
+            speedCheckedAt: ISO8601DateFormatter().date(from: "2026-08-25T00:00:00Z")!,
             subscriptionSourceURL: source,
             apiSourceURL: api,
             speedSourceURL: speed,
-            rates: rates,
-            revision: revision
+            rates: rates
         )
     }()
 
@@ -301,33 +287,17 @@ struct V013OfficialPricingSnapshot: Codable, Equatable, Identifiable {
         return model == "gpt-5.6" ? "gpt-5.6-sol" : model
     }
 
-    private static func normalizedTier(_ value: String?) -> String? {
+    static func normalizedTier(_ value: String?) -> String? {
         switch value?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() {
-        case nil, "", "auto", "default", "standard":
+        case "default", "standard":
             return "standard"
-        case "fast", "priority", "ultrafast":
+        case "fast", "priority":
             return "fast"
         default:
             return nil
         }
     }
 
-    private static func revision(
-        rates: [V013OfficialPricingRate],
-        subscriptionSourceURL: String,
-        apiSourceURL: String,
-        speedSourceURL: String
-    ) -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let revisionInput = (try? encoder.encode(rates)) ?? Data()
-        return V011AgentLoopReceipt.sha256(
-            revisionInput
-                + Data(subscriptionSourceURL.utf8)
-                + Data(apiSourceURL.utf8)
-                + Data(speedSourceURL.utf8)
-        )
-    }
 }

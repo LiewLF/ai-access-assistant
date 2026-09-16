@@ -1,0 +1,101 @@
+--- a/sdk/cliproxy/usage/manager.go
++++ b/sdk/cliproxy/usage/manager.go
+@@ -43,0 +44,3 @@
++	// ResponseModel stores the model reported by the upstream response.
++	ResponseTokenFields string
++	ResponseModel       string
+@@ -76,0 +80,2 @@
++	ResponseTokenFields string
++	ResponseModel       string
+--- a/sdk/pluginapi/types.go
++++ b/sdk/pluginapi/types.go
+@@ -1367 +1367 @@
+-	// ServiceTier records the requested or reported service tier.
++	// ServiceTier records the requested service tier.
+@@ -1368,0 +1369,5 @@
++	// ResponseModel records the model reported by the upstream response.
++	ResponseTokenFields string
++	ResponseModel       string
++	// ResponseServiceTier records the tier reported by the upstream response.
++	ResponseServiceTier string
+--- a/internal/pluginhost/adapters_usage_translation.go
++++ b/internal/pluginhost/adapters_usage_translation.go
+@@ -150,16 +150,19 @@
+-		Provider:        record.Provider,
+-		ExecutorType:    record.ExecutorType,
+-		Model:           record.Model,
+-		Alias:           record.Alias,
+-		APIKey:          record.APIKey,
+-		AuthID:          record.AuthID,
+-		AuthIndex:       record.AuthIndex,
+-		AuthType:        record.AuthType,
+-		Source:          record.Source,
+-		ReasoningEffort: record.ReasoningEffort,
+-		ServiceTier:     record.ServiceTier,
+-		Generate:        coreusage.GenerateEnabled(record.Generate),
+-		RequestedAt:     record.RequestedAt,
+-		Latency:         record.Latency,
+-		TTFT:            record.TTFT,
+-		Failed:          record.Failed,
++		Provider:            record.Provider,
++		ExecutorType:        record.ExecutorType,
++		Model:               record.Model,
++		Alias:               record.Alias,
++		APIKey:              record.APIKey,
++		AuthID:              record.AuthID,
++		AuthIndex:           record.AuthIndex,
++		AuthType:            record.AuthType,
++		Source:              record.Source,
++		ReasoningEffort:     record.ReasoningEffort,
++		ServiceTier:         record.ServiceTier,
++		ResponseModel:       record.ResponseModel,
++		ResponseTokenFields: record.ResponseTokenFields,
++		ResponseServiceTier: record.ResponseServiceTier,
++		Generate:            coreusage.GenerateEnabled(record.Generate),
++		RequestedAt:         record.RequestedAt,
++		Latency:             record.Latency,
++		TTFT:                record.TTFT,
++		Failed:              record.Failed,
+--- a/internal/runtime/executor/helps/usage_helpers.go
++++ b/internal/runtime/executor/helps/usage_helpers.go
+@@ -10,0 +11 @@
++	"strconv"
+@@ -402,0 +404,2 @@
++		ResponseModel:       detail.ResponseModel,
++		ResponseTokenFields: detail.ResponseTokenFields,
+@@ -604,0 +608,2 @@
++		preservedModel := b.detail.ResponseModel
++		preservedFields := b.detail.ResponseTokenFields
+@@ -607,0 +613,6 @@
++		}
++		if b.detail.ResponseTokenFields == "" {
++			b.detail.ResponseTokenFields = preservedFields
++		}
++		if b.detail.ResponseModel == "" {
++			b.detail.ResponseModel = preservedModel
+@@ -677,0 +689 @@
++	root := gjson.ParseBytes(data)
+@@ -679 +691 @@
+-	usageNode := gjson.ParseBytes(data).Get("response.usage")
++	usageNode := root.Get("response.usage")
+@@ -687,0 +700,11 @@
++	detail.ResponseModel = root.Get("response.model").String()
++	fields := []string{}
++	for _, path := range []string{"input_tokens", "output_tokens", "total_tokens",
++		"input_tokens_details.cached_tokens", "input_tokens_details.cache_write_tokens",
++		"output_tokens_details.reasoning_tokens"} {
++		node := usageNode.Get(path)
++		if value, err := strconv.ParseInt(node.Raw, 10, 64); node.Type == gjson.Number && err == nil && value >= 0 {
++			fields = append(fields, path)
++		}
++	}
++	detail.ResponseTokenFields = strings.Join(fields, ",")
+--- a/internal/runtime/executor/helps/plugin_executor_usage.go
++++ b/internal/runtime/executor/helps/plugin_executor_usage.go
+@@ -166,0 +167,6 @@
++	if merged.ResponseTokenFields == "" {
++		merged.ResponseTokenFields = existing.ResponseTokenFields
++	}
++	if merged.ResponseModel == "" {
++		merged.ResponseModel = existing.ResponseModel
++	}

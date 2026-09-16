@@ -3,6 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct BeginnerRelayCapabilityEditor: View {
+    @Environment(\.appDisplayTextSize) private var displayTextSize
     let sourceProfile: CodexRelayProfile
     let isCurrent: Bool
     let save: (CodexRelayProfile) -> Void
@@ -127,6 +128,7 @@ struct BeginnerRelayCapabilityEditor: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text("“\(sourceProfile.name)”的扩展能力")
                     .font(.title2.bold())
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(
                     "只修改能力字段；地址、模型、Provider ID和认证策略保持不变。"
                 )
@@ -165,7 +167,7 @@ struct BeginnerRelayCapabilityEditor: View {
                         in: RoundedRectangle(cornerRadius: 10)
                     )
 
-                    HStack(alignment: .top, spacing: 12) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), alignment: .top)], alignment: .leading, spacing: 12) {
                         editorField("上下文长度") {
                             VStack(alignment: .leading, spacing: 5) {
                                 TextField(
@@ -285,7 +287,7 @@ struct BeginnerRelayCapabilityEditor: View {
                         }
                     }
 
-                    HStack(alignment: .top, spacing: 12) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), alignment: .top)], alignment: .leading, spacing: 12) {
                         editorField("协议") {
                             VStack(alignment: .leading, spacing: 5) {
                                 Text("Responses")
@@ -350,7 +352,7 @@ struct BeginnerRelayCapabilityEditor: View {
                         }
                     }
 
-                    HStack(alignment: .top, spacing: 12) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), alignment: .top)], alignment: .leading, spacing: 12) {
                         editorField("Web Search（Responses）") {
                             Picker(
                                 "Web Search",
@@ -498,27 +500,29 @@ struct BeginnerRelayCapabilityEditor: View {
 
             Divider()
 
-            HStack {
-                Button("取消") {
-                    cancel()
-                }
-                .keyboardShortcut(.cancelAction)
-                Spacer()
-                Button(
-                    isCurrent
-                        ? "保存并快速应用"
-                        : "保存扩展能力"
-                ) {
-                    guard let targetProfile else { return }
-                    save(targetProfile)
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(targetProfile == nil)
+            ViewThatFits(in: .horizontal) {
+                HStack { cancelButton; Spacer(); saveButton }
+                VStack(alignment: .trailing, spacing: 10) { saveButton; cancelButton }
             }
             .padding(18)
         }
-        .frame(width: 650, height: 720)
+        .appDisplayScale(displayTextSize)
+        .frame(minWidth: 520, idealWidth: 650, minHeight: 440, idealHeight: 720)
+    }
+
+    private var cancelButton: some View {
+        Button("取消", action: cancel)
+            .keyboardShortcut(.cancelAction)
+    }
+
+    private var saveButton: some View {
+        Button(isCurrent ? "保存并快速应用" : "保存扩展能力") {
+            guard let targetProfile else { return }
+            save(targetProfile)
+        }
+        .buttonStyle(.borderedProminent)
+        .keyboardShortcut(.defaultAction)
+        .disabled(targetProfile == nil)
     }
 
     private var targetProfile: CodexRelayProfile? {

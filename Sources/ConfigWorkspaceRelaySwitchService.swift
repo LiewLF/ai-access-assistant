@@ -225,18 +225,18 @@ struct ConfigWorkspaceRelaySwitchService {
             reportEvent(.phase(.validate))
             reportEvent(
                 .status(
-                    "正在验证模型接口和最小真实请求"
+                    "正在对指定模型发送最小真实请求"
                 )
             )
+            // LTP-130: the live switch uses the same specified-model probe as
+            // saved-relay add and switch preflight. The /models directory is
+            // an independent discovery and is never a precondition here.
             let validation = try await
-                RelayConnectionVerifier.verify(
+                V011AccessDependencies.verifyDraftSpecifiedModel(
                     profile: request.profile,
-                    apiKey: key,
-                    confirmedLocalGateway:
-                        request.profile
-                            .localGatewayConfirmed == true
+                    apiKey: key
                 )
-            try recordAuthenticatedDirectoryValidation(
+            try recordSpecifiedModelProbeValidation(
                 for: request.profile
             )
             _ = try switchEngine.completeRelayValidation(
@@ -343,13 +343,16 @@ struct ConfigWorkspaceRelaySwitchService {
         }
     }
 
-    private func recordAuthenticatedDirectoryValidation(
+    /// LTP-130: a successful switch only proves the specified-model probe. No
+    /// catalog read happens on this path, so the probe schedule must not
+    /// record a model-list pass here.
+    private func recordSpecifiedModelProbeValidation(
         for profile: CodexRelayProfile
     ) throws {
         guard let entryID = profile.catalogEntryID else {
             return
         }
         _ = try RelayProbeScheduleStore()
-            .recordAuthenticatedSuccess(entryID: entryID)
+            .recordSpecifiedModelProbeSuccess(entryID: entryID)
     }
 }

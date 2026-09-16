@@ -4,7 +4,7 @@ import Foundation
 
 enum V011CurrentVerificationRoute {
     case official
-    case relay(RelayProfile, String, String?, String)
+    case relay(RelayProfile, String, String?, String?)
 
     var providerID: String {
         switch self {
@@ -30,6 +30,19 @@ enum V011CurrentVerificationRoute {
             return nil
         case let .relay(_, _, profileID, _):
             return profileID
+        }
+    }
+
+    /// The inline key of the live route, when the configuration itself holds
+    /// one. `nil` means this is a local gateway: the app has no credential to
+    /// send, so the route is proven by the bounded local runtime check instead
+    /// of an authenticated HTTP probe.
+    var inlineSecret: String? {
+        switch self {
+        case .official:
+            return nil
+        case let .relay(_, _, _, secret):
+            return secret
         }
     }
 
@@ -135,7 +148,6 @@ struct V011CurrentRouteResolver {
                   provider.providerID == providerID,
                   provider.wireAPI?.lowercased()
                     == "responses",
-                  provider.hasBearerToken,
                   !provider.hasEnvKey,
                   !provider.hasCommandAuth,
                   let requiresOpenAIAuth =
@@ -144,7 +156,6 @@ struct V011CurrentRouteResolver {
                   let components = URLComponents(
                       string: baseURL
                   ),
-                  components.scheme?.lowercased() == "https",
                   components.user == nil,
                   components.password == nil,
                   components.query == nil,
@@ -155,13 +166,31 @@ struct V011CurrentRouteResolver {
                     .trimmingCharacters(
                         in: .whitespacesAndNewlines
                     ),
-                  !model.isEmpty,
-                  let activeSecret = document.string(at: [
-                      "model_providers",
-                      providerID,
-                      "experimental_bearer_token",
-                  ]),
-                  !activeSecret.isEmpty else {
+                  !model.isEmpty else {
+                throw V011CurrentConnectionVerificationError
+                    .savedProfileMismatch
+            }
+            let inlineSecret = document.string(at: [
+                "model_providers",
+                providerID,
+                "experimental_bearer_token",
+            ]).flatMap { $0.isEmpty ? nil : $0 }
+            // Two live shapes can be verified, and they must not borrow
+            // each other's assumptions. A saved relay keeps its own key in
+            // config.toml and stays HTTPS. A local gateway is plain HTTP on
+            // this Mac only, carries no key, and is bounded by the same
+            // address rules the relay was saved with.
+            let savedRelayShape =
+                provider.hasBearerToken
+                    && components.scheme?.lowercased() == "https"
+                    && inlineSecret != nil
+            let localGatewayShape =
+                !provider.hasBearerToken
+                    && inlineSecret == nil
+                    && components.scheme?.lowercased() == "http"
+                    && V011RelayEndpointPolicy
+                        .isLoopbackGatewayAddress(baseURL)
+            guard savedRelayShape || localGatewayShape else {
                 throw V011CurrentConnectionVerificationError
                     .savedProfileMismatch
             }
@@ -172,7 +201,9 @@ struct V011CurrentRouteResolver {
                       in: document,
                       managedProviderIDs:
                         allManagedProviderIDs,
-                      activeProviderID: providerID
+                      activeProviderID: providerID,
+                      requireActiveInlineSecret:
+                        inlineSecret != nil
                   ) else {
                 throw V011CurrentConnectionVerificationError
                     .savedProfileMismatch
@@ -202,14 +233,17 @@ struct V011CurrentRouteResolver {
             } else {
                 matchedProfile = matchedProfiles.first
             }
-            if let matchedProfile {
+            // A route without an inline key has nothing to compare against a
+            // stored secret. Reading that secret here would decide nothing,
+            // so the comparison stays tied to the shape that carries one.
+            if let matchedProfile, let inlineSecret {
                 guard let expectedSecret = try credentialStore
                         .secret(
                             reference: matchedProfile
                                 .v011CredentialReference
                         ),
                       !expectedSecret.isEmpty,
-                      activeSecret == expectedSecret else {
+                      inlineSecret == expectedSecret else {
                     throw V011CurrentConnectionVerificationError
                         .savedProfileMismatch
                 }
@@ -277,7 +311,7 @@ struct V011CurrentRouteResolver {
                 profile,
                 host,
                 matchedProfile?.id,
-                activeSecret
+                inlineSecret
             )
         }
     }
@@ -285,7 +319,8 @@ struct V011CurrentRouteResolver {
     func credentialsAreScrubbed(
         in document: TOMLSemanticDocument,
         managedProviderIDs: Set<String>,
-        activeProviderID: String?
+        activeProviderID: String?,
+        requireActiveInlineSecret: Bool = true
     ) -> Bool {
         for providerID in managedProviderIDs {
             let fields = [
@@ -303,7 +338,8 @@ struct V011CurrentRouteResolver {
                     $0 == prefix || $0.hasPrefix(prefix + "/")
                 }
                 if providerID == activeProviderID,
-                   field == "experimental_bearer_token" {
+                   field == "experimental_bearer_token",
+                   requireActiveInlineSecret {
                     guard exists else { return false }
                 } else if exists {
                     return false

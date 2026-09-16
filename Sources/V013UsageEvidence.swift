@@ -2,7 +2,7 @@ import Foundation
 
 struct V012PendingUsageRefresh {
     let rows: [V011SessionRow]
-    let historyHasMore: Bool
+    let historyCoverage: V013UsageHistoryCoverage
     let officialSnapshot: V011OfficialUsageSnapshot?
     let profiles: [CodexRelayProfile]
 }
@@ -13,13 +13,15 @@ struct V013ObservedWindowUsage: Equatable {
     let apiEquivalentUSD: Double?
     let observedFrom: Date
     let observedThrough: Date
+    var credits: Double? = nil
+    var pricingIssues: [String] = []
 }
 
 struct V013SupplementalUsageEvidence: Equatable {
     let observed: V013ObservedWindowUsage?
     let officialActivity: V013OfficialActivityEvidence?
     let currentEquivalentCapacity: V013EquivalentCapacityEvidence?
-    let localStructureReference: V013LocalStructureCapacityReference?
+    let cpaQuota: V013CPAQuotaEvaluation
     let historicalEquivalentCapacity: V013EquivalentCapacityEvidence?
     let percentageTransitionCount: Int
     let usableIntervalCount: Int
@@ -28,7 +30,7 @@ struct V013SupplementalUsageEvidence: Equatable {
         observed: nil,
         officialActivity: nil,
         currentEquivalentCapacity: nil,
-        localStructureReference: nil,
+        cpaQuota: .empty,
         historicalEquivalentCapacity: nil,
         percentageTransitionCount: 0,
         usableIntervalCount: 0
@@ -46,24 +48,51 @@ struct V013OfficialActivityEvidence: Equatable {
     let observedThrough: Date
 }
 
-struct V013LocalStructureCapacityReference: Equatable {
-    let lowerWeekTokens: Double
-    let lowerWeekAPIEquivalentUSD: Double?
+struct V013CPAQuotaEstimate: Equatable {
+    let pointFullWindowTokens: Double
+    let lowerFullWindowTokens: Double
+    let upperFullWindowTokens: Double
+    let pointFullWindowCredits: Double?
+    let lowerFullWindowCredits: Double?
+    let upperFullWindowCredits: Double?
+    let pointFullWindowAPIEquivalentUSD: Double?
+    let lowerFullWindowAPIEquivalentUSD: Double?
+    let upperFullWindowAPIEquivalentUSD: Double?
     let observedTokens: Int64
-    let requestCount: Int
-    let identityBoundTokens: Int64
-    let displayedPercentFrom: Int
-    let displayedPercentThrough: Int
+    let observedCredits: Double?
+    let observedAPIEquivalentUSD: Double?
+    let percentSpan: Double
+    let lastUsedPercent: Double
     let sampledFrom: Date
     let sampledThrough: Date
-    let resetsAt: Date
-    let excludesOtherDevices: Bool
+    let confidence: V013WeeklyUsageEstimate.Confidence
+    let apiIntervalSampleCount: Int
+    let creditsIntervalSampleCount: Int
+}
+
+struct V013CPAQuotaEvaluation: Equatable {
+    let estimate: V013CPAQuotaEstimate?
+    let partialCapacity: V013EquivalentCapacityEvidence?
+    let reason: String
+    let observationCount: Int
+    let percentageTransitionCount: Int
+    let usableIntervalCount: Int
+
+    static let empty = Self(
+        estimate: nil,
+        partialCapacity: nil,
+        reason: "正在积累可信样本：尚无同一周窗口的调用级配额样本",
+        observationCount: 0,
+        percentageTransitionCount: 0,
+        usableIntervalCount: 0
+    )
 }
 
 struct V013EquivalentCapacityEvidence: Equatable {
     enum Scope: String { case currentWindow, historicalWindow }
     enum Source: String {
         case officialAccountAlignedDelta
+        case localIdentityBoundLowerBound
     }
 
     let scope: Scope
@@ -84,8 +113,12 @@ enum V013UsageEvidenceBuilder {
         snapshot: V011OfficialUsageSnapshot,
         window: V011OfficialUsageWindow,
         observations: [V013QuotaLedgerObservation],
+        turns: [V012CompletedTurnUsage],
+        historyCoverageComplete: Bool,
+        sourceReadsStable: Bool,
         planType: String?,
-        pricing: V013OfficialPricingSnapshot
+        pricing: V013OfficialPricingSnapshot,
+        apiPricingPolicy: V013APIPricingPolicy = .recordedTier
     ) -> V013SupplementalUsageEvidence {
         guard let resetsAt = window.resetsAt else { return .empty }
         let windowStart = resetsAt.addingTimeInterval(
@@ -104,36 +137,39 @@ enum V013UsageEvidenceBuilder {
             snapshot: snapshot,
             windowStart: windowStart
         )
-        let currentEquivalent = equivalentCapacity(
+        let officialCurrentEquivalent = equivalentCapacity(
             observations: observations,
             scope: .currentWindow
         )
-        let localReference = localStructureReference(
-            ledger: ledger,
-            snapshot: snapshot,
+        let cpaQuota = cpaQuotaEvaluation(
+            records: ledger.records,
+            turns: turns,
             observations: observations,
+            accountScope: snapshot.accountScopeSHA256,
+            windowStart: windowStart,
+            resetsAt: resetsAt,
+            observedThrough: snapshot.observedAt,
+            historyCoverageComplete: historyCoverageComplete,
+            sourceReadsStable: sourceReadsStable,
             planType: planType,
-            pricing: pricing
+            pricing: pricing,
+            apiPricingPolicy: apiPricingPolicy
         )
         let historicalEquivalent = historicalEquivalentCapacity(
             ledger: ledger,
             snapshot: snapshot,
             currentResetsAt: resetsAt
         )
-        let usableIntervals = currentEquivalent?.sampleCount
-            ?? accountAlignedLocalIntervalCount(
-                ledger: ledger,
-                snapshot: snapshot,
-                observations: observations
-            )
         return V013SupplementalUsageEvidence(
             observed: observed,
             officialActivity: officialActivity,
-            currentEquivalentCapacity: currentEquivalent,
-            localStructureReference: localReference,
+            currentEquivalentCapacity: officialCurrentEquivalent
+                ?? cpaQuota.partialCapacity,
+            cpaQuota: cpaQuota,
             historicalEquivalentCapacity: historicalEquivalent,
-            percentageTransitionCount: transitionCount(observations),
-            usableIntervalCount: usableIntervals
+            percentageTransitionCount:
+                cpaQuota.percentageTransitionCount,
+            usableIntervalCount: cpaQuota.usableIntervalCount
         )
     }
 
@@ -151,16 +187,18 @@ enum V013UsageEvidenceBuilder {
                 && $0.completedAt >= windowStart
                 && $0.completedAt <= snapshot.observedAt
         }
+        let identityScope = snapshot.accountScopeSHA256
         guard latest != nil || !local.isEmpty else { return nil }
         return V013OfficialActivityEvidence(
             latestDailyBucket: latest?.startDate,
             latestDailyBucketTokens: latest?.tokens,
             dailyBucketBoundaryKnown: false,
-            localWindowTokens: local.reduce(0) { $0 + $1.billableTokens },
+            localWindowTokens: local.reduce(0) { $0 + $1.modelProcessedTokens },
             localWindowIdentityBoundTokens: local.filter {
-                $0.accountScopeSHA256 == snapshot.accountScopeSHA256
+                guard let identityScope else { return false }
+                return $0.accountScopeSHA256 == identityScope
                     && $0.identityBoundAtCompletion
-            }.reduce(0) { $0 + $1.billableTokens },
+            }.reduce(0) { $0 + $1.modelProcessedTokens },
             localWindowRequestCount: local.count,
             windowStart: windowStart,
             observedThrough: snapshot.observedAt
@@ -208,52 +246,260 @@ enum V013UsageEvidenceBuilder {
         return values.last
     }
 
-    private static func localStructureReference(
-        ledger: V013UsageLedgerState,
-        snapshot: V011OfficialUsageSnapshot,
-        observations: [V013QuotaLedgerObservation],
-        planType: String?,
-        pricing: V013OfficialPricingSnapshot
-    ) -> V013LocalStructureCapacityReference? {
-        let milestones = monotonicMilestones(observations)
-        guard let first = milestones.first,
-              let last = milestones.last,
-              last.usedPercent > first.usedPercent else { return nil }
-        let records = ledger.records.filter {
+    private static func legacyPostCompletionNotice(
+        records: [V013UsageLedgerRecord],
+        accountScope: String,
+        windowStart: Date,
+        observedThrough: Date
+    ) -> String? {
+        let count = records.lazy.filter {
             isOfficial($0)
-                && $0.completedAt > first.observedAt
-                && $0.completedAt <= last.observedAt
+                && $0.legacyPostCompletionAccountScopeSHA256 == accountScope
+                && $0.completedAt >= windowStart
+                && $0.completedAt <= observedThrough
+        }.count
+        guard count > 0 else { return nil }
+        return "历史有 \(count) 条仅完成后账号观察的调用，账号归属无法回溯确认，未纳入估算；后续仅在调用前后均有同账号观察时参与估算"
+    }
+
+    private static func cpaQuotaEvaluation(
+        records: [V013UsageLedgerRecord],
+        turns: [V012CompletedTurnUsage],
+        observations: [V013QuotaLedgerObservation],
+        accountScope: String?,
+        windowStart: Date,
+        resetsAt: Date,
+        observedThrough: Date,
+        historyCoverageComplete: Bool,
+        sourceReadsStable: Bool,
+        planType: String?,
+        pricing: V013OfficialPricingSnapshot,
+        apiPricingPolicy: V013APIPricingPolicy
+    ) -> V013CPAQuotaEvaluation {
+        guard historyCoverageComplete else {
+            return V013CPAQuotaEvaluation(
+                estimate: nil,
+                partialCapacity: nil,
+                reason: "本周本机历史未完整覆盖，调用级区间样本暂不可用",
+                observationCount: 0,
+                percentageTransitionCount: 0,
+                usableIntervalCount: 0
+            )
         }
-        let tokens = records.reduce(Int64(0)) { $0 + $1.billableTokens }
-        let bounds = percentageDeltaBounds(
-            from: first.usedPercent,
-            through: last.usedPercent
+        guard sourceReadsStable else {
+            return V013CPAQuotaEvaluation(
+                estimate: nil,
+                partialCapacity: nil,
+                reason: "本周来源正在写入，调用级区间样本暂不可用",
+                observationCount: 0,
+                percentageTransitionCount: 0,
+                usableIntervalCount: 0
+            )
+        }
+        guard let accountScope else {
+            return V013CPAQuotaEvaluation(
+                estimate: nil,
+                partialCapacity: nil,
+                reason: "官方账号身份范围不可用，调用级配额样本不可绑定",
+                observationCount: 0,
+                percentageTransitionCount: 0,
+                usableIntervalCount: 0
+            )
+        }
+        let legacyNotice = legacyPostCompletionNotice(
+            records: records,
+            accountScope: accountScope,
+            windowStart: windowStart,
+            observedThrough: observedThrough
         )
-        guard tokens > 0, bounds.maximum > 0 else { return nil }
-        let api = completeSum(records.map {
-            $0.repriced(
-                officialPricing: pricing,
-                planType: planType
-            ).apiEquivalentUSD
-        })
-        return V013LocalStructureCapacityReference(
-            lowerWeekTokens: Double(tokens) * 100 / bounds.maximum,
-            lowerWeekAPIEquivalentUSD: api.map {
-                $0 * 100 / bounds.maximum
-            },
-            observedTokens: tokens,
-            requestCount: records.count,
-            identityBoundTokens: records.filter {
-                $0.accountScopeSHA256 == snapshot.accountScopeSHA256
-                    && $0.identityBoundAtCompletion
-            }.reduce(0) { $0 + $1.billableTokens },
-            displayedPercentFrom: first.usedPercent,
-            displayedPercentThrough: last.usedPercent,
-            sampledFrom: first.observedAt,
-            sampledThrough: last.observedAt,
-            resetsAt: last.resetsAt,
-            excludesOtherDevices: true
+
+        // 每个 turn 按稳定 ID 读取完成时身份。旧未绑定记录保持原样，
+        // 但不再阻断整周；只有相邻官方百分比观察之间的调用全部绑定到
+        // 当前可靠账号，且调用/百分比/完成时间边界对齐，该区间才参与估算。
+        let recordsByID = Dictionary(
+            records.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
         )
+        var ordinal = 0
+        var foreignWeeklyCallCount = 0
+        var calls: [V013CPAIntervalCall] = []
+        for turn in turns {
+            guard isOfficial(turn.providerID),
+                  turn.completedAt >= windowStart,
+                  turn.completedAt <= observedThrough,
+                  !isCodexSpark(turn.model) else { continue }
+            let binding = callBinding(
+                record: recordsByID[turn.id],
+                turn: turn,
+                accountScope: accountScope,
+                windowStart: windowStart,
+                observedThrough: observedThrough
+            )
+            for call in turn.calls {
+                defer { ordinal += 1 }
+                guard call.observedAt >= windowStart,
+                      call.observedAt <= observedThrough else { continue }
+                if call.rateLimit.map({
+                    isForeignWeeklyCycle($0, resetsAt: resetsAt)
+                }) == true {
+                    foreignWeeklyCallCount += 1
+                    continue
+                }
+                let weeklyBoundaryAligned = call.rateLimit.map {
+                    !$0.isWeekly || (
+                        abs($0.observedAt.timeIntervalSince(call.observedAt))
+                            <= 1
+                            && abs($0.resetsAt.timeIntervalSince(resetsAt))
+                                <= 60
+                            && $0.observedAt >= windowStart
+                            && $0.observedAt <= observedThrough
+                    )
+                } ?? true
+                let milestone = call.rateLimit.flatMap {
+                    milestoneRateLimit(
+                        $0,
+                        windowStart: windowStart,
+                        resetsAt: resetsAt,
+                        observedThrough: observedThrough
+                    )
+                }
+                let cost = V012UsageCostCalculator.calculate(
+                    calls: [call],
+                    model: turn.pricingModel,
+                    providerID: turn.providerID,
+                    planType: planType,
+                    serviceTier: turn.pricingServiceTier,
+                    relayPricing: nil,
+                    officialPricing: pricing,
+                    requestBoundariesKnown: turn.containsOnlyTurnTotals != true,
+                    apiPricingPolicy: apiPricingPolicy
+                )
+                calls.append(
+                    V013CPAIntervalCall(
+                        ordinal: ordinal,
+                        observedAt: call.observedAt,
+                        tokens: call.inputTokens + call.outputTokens,
+                        credits: cost.credits,
+                        apiEquivalentUSD: cost.apiEquivalentUSD,
+                        milestonePercent: milestone?.usedPercent,
+                        binding: binding,
+                        weeklyBoundaryAligned: weeklyBoundaryAligned
+                    )
+                )
+            }
+        }
+        // Exec does not emit quota headers. Reuse actual account observations
+        // as zero-usage boundaries; never invent headers on the persisted calls.
+        // A ledger total without its source calls is a coverage gap. Start a new
+        // sample after the latest gap; old gaps must not freeze later evidence.
+        let presentTurnIDs = Set(turns.map(\.id))
+        let latestSourceGap = records.filter {
+            !presentTurnIDs.contains($0.id) && isOfficial($0) && !isCodexSpark($0.model)
+                && $0.completedAt >= windowStart && $0.completedAt <= observedThrough
+        }.map(\.completedAt).max()
+        let boundaries = observations.filter { observation in
+            observation.accountScopeSHA256 == accountScope && observation.windowMinutes == 10_080
+                && abs(observation.resetsAt.timeIntervalSince(resetsAt)) <= 60
+                && observation.observedAt >= windowStart && observation.observedAt <= observedThrough
+                && observation.historyCoverageComplete && observation.sourceReadsStable
+                && latestSourceGap.map { observation.observedAt >= $0 } != false
+        }
+        // Prefer the freshest complete account observations. Counting headers
+        // alone would let old, flat percentages hide later valid intervals.
+        let latestCallBoundary = calls.filter {
+            $0.binding == .matchingAccount && $0.milestonePercent != nil
+        }.map(\.observedAt).max()
+        let useAccountBoundaries = (boundaries.count >= 2
+            || (boundaries.count == 1 && latestCallBoundary == nil))
+            && latestCallBoundary.map { latest in
+                boundaries.contains { $0.observedAt >= latest }
+            } != false
+        if useAccountBoundaries {
+            calls = calls.map {
+                V013CPAIntervalCall(ordinal: $0.ordinal, observedAt: $0.observedAt,
+                        tokens: $0.tokens, credits: $0.credits,
+                        apiEquivalentUSD: $0.apiEquivalentUSD, milestonePercent: nil,
+                        binding: $0.binding, weeklyBoundaryAligned: $0.weeklyBoundaryAligned)
+            }
+            let present = Set(turns.map(\.id))
+            for record in records where !present.contains(record.id)
+                && isOfficial(record) && !isCodexSpark(record.model)
+                && record.completedAt >= windowStart && record.completedAt <= observedThrough {
+                calls.append(V013CPAIntervalCall(ordinal: ordinal, observedAt: record.completedAt,
+                    tokens: record.modelProcessedTokens, credits: nil, apiEquivalentUSD: nil,
+                    milestonePercent: nil, binding: .unbound, weeklyBoundaryAligned: true))
+                ordinal += 1
+            }
+            for boundary in boundaries {
+                calls.append(V013CPAIntervalCall(ordinal: ordinal, observedAt: boundary.observedAt,
+                    tokens: 0, credits: 0, apiEquivalentUSD: 0,
+                    milestonePercent: Double(boundary.usedPercent),
+                    binding: .matchingAccount, weeklyBoundaryAligned: true))
+                ordinal += 1
+            }
+        }
+        return V013CPAIntervalEngine.evaluate(
+            calls: calls, resetsAt: resetsAt,
+            foreignWeeklyCallCount: foreignWeeklyCallCount,
+            legacyNotice: legacyNotice,
+            crossingTurnBoundaries: useAccountBoundaries ? turns.filter {
+                $0.containsOnlyTurnTotals == true && isOfficial($0.providerID)
+            }.map { DateInterval(start: $0.startedAt, end: $0.completedAt) } : []
+        )
+    }
+
+    private static func callBinding(
+        record: V013UsageLedgerRecord?,
+        turn: V012CompletedTurnUsage,
+        accountScope: String,
+        windowStart: Date,
+        observedThrough: Date
+    ) -> V013CPAIntervalBinding {
+        guard let record,
+              isOfficial(record.providerID),
+              !isCodexSpark(record.model),
+              record.identityBoundAtCompletion,
+              let recordScope = record.accountScopeSHA256 else {
+            return .unbound
+        }
+        guard abs(
+            record.completedAt.timeIntervalSince(turn.completedAt)
+        ) <= 1,
+        record.completedAt >= windowStart,
+        record.completedAt <= observedThrough else {
+            return .cutoffMismatch
+        }
+        return recordScope == accountScope
+            ? .matchingAccount : .otherAccount
+    }
+
+    /// 有效周 rate_limits 才算里程碑：weekly、reset 与当前周窗口匹配、
+    /// 观察时间落在窗口与快照截止之间、百分比在 0...100。
+    private static func milestoneRateLimit(
+        _ rateLimit: V012RateLimitObservation,
+        windowStart: Date,
+        resetsAt: Date,
+        observedThrough: Date
+    ) -> V012RateLimitObservation? {
+        guard rateLimit.isWeekly,
+              abs(rateLimit.resetsAt.timeIntervalSince(resetsAt)) <= 60,
+              rateLimit.observedAt >= windowStart,
+              rateLimit.observedAt <= observedThrough,
+              rateLimit.usedPercent >= 0,
+              rateLimit.usedPercent <= 100 else { return nil }
+        return rateLimit
+    }
+
+    private static func isForeignWeeklyCycle(
+        _ rateLimit: V012RateLimitObservation,
+        resetsAt: Date
+    ) -> Bool {
+        rateLimit.isWeekly
+            && abs(rateLimit.resetsAt.timeIntervalSince(resetsAt)) > 60
+    }
+
+    private static func isCodexSpark(_ model: String) -> Bool {
+        model.lowercased().contains("codex-spark")
     }
 
     private static func historicalEquivalentCapacity(
@@ -282,12 +528,13 @@ enum V013UsageEvidenceBuilder {
 
     private static func observedUsage(
         records: [V013UsageLedgerRecord],
-        accountScope: String,
+        accountScope: String?,
         from: Date,
         through: Date,
         planType: String?,
         pricing: V013OfficialPricingSnapshot
     ) -> V013ObservedWindowUsage? {
+        guard let accountScope else { return nil }
         let confirmed = records.filter {
             isOfficial($0)
                 && $0.accountScopeSHA256 == accountScope
@@ -295,97 +542,42 @@ enum V013UsageEvidenceBuilder {
                 && $0.completedAt >= from
                 && $0.completedAt <= through
         }
-        let tokens = confirmed.reduce(Int64(0)) {
-            $0 + $1.billableTokens
-        }
-        guard tokens > 0,
-              let first = confirmed.map(\.completedAt).min() else {
-            return nil
-        }
-        return V013ObservedWindowUsage(
-            requestCount: confirmed.count,
-            tokens: tokens,
-            apiEquivalentUSD: completeSum(confirmed.map {
-                $0.repriced(
-                    officialPricing: pricing,
-                    planType: planType
-                ).apiEquivalentUSD
-            }),
-            observedFrom: first,
-            observedThrough: through
-        )
+        return V013PricingExplanation.observedUsage(
+            records: confirmed, through: through, planType: planType, pricing: pricing)
     }
 
-    private static func monotonicMilestones(
-        _ values: [V013QuotaLedgerObservation]
-    ) -> [V013QuotaLedgerObservation] {
-        let ordered = values.sorted { $0.observedAt < $1.observedAt }
-        guard let first = ordered.first else { return [] }
-        var result = [first]
-        var maximum = first.usedPercent
-        for value in ordered.dropFirst() where value.usedPercent > maximum {
-            result.append(value)
-            maximum = value.usedPercent
-        }
-        return result
-    }
-
-    private static func accountAlignedLocalIntervalCount(
-        ledger: V013UsageLedgerState,
-        snapshot: V011OfficialUsageSnapshot,
-        observations: [V013QuotaLedgerObservation]
-    ) -> Int {
-        zip(observations, observations.dropFirst()).reduce(0) {
-            count, pair in
-            guard pair.1.usedPercent > pair.0.usedPercent,
-                  pair.0.historyCoverageComplete,
-                  pair.1.historyCoverageComplete,
-                  pair.0.sourceReadsStable,
-                  pair.1.sourceReadsStable else { return count }
-            let records = ledger.records.filter {
-                isOfficial($0)
-                    && $0.completedAt > pair.0.observedAt
-                    && $0.completedAt <= pair.1.observedAt
-            }
-            guard !records.isEmpty,
-                  records.allSatisfy({
-                      $0.accountScopeSHA256
-                          == snapshot.accountScopeSHA256
-                          && $0.identityBoundAtCompletion
-                  }) else { return count }
-            return count + 1
-        }
-    }
-
-    private static func percentageDeltaBounds(
+    static func percentageDeltaBounds(
         from: Int,
         through: Int
     ) -> (minimum: Double, maximum: Double) {
-        let firstLower = max(0, Double(from) - 0.5)
-        let firstUpper = min(100, Double(from) + 0.5)
-        let lastLower = max(0, Double(through) - 0.5)
-        let lastUpper = min(100, Double(through) + 0.5)
+        percentageDeltaBounds(
+            from: Double(from),
+            through: Double(through)
+        )
+    }
+
+    static func percentageDeltaBounds(
+        from: Double,
+        through: Double
+    ) -> (minimum: Double, maximum: Double) {
+        let firstLower = max(0, from - 0.5)
+        let firstUpper = min(100, from + 0.5)
+        let lastLower = max(0, through - 0.5)
+        let lastUpper = min(100, through + 0.5)
         return (
             max(0, lastLower - firstUpper),
             max(0, lastUpper - firstLower)
         )
     }
 
-    private static func transitionCount(
-        _ values: [V013QuotaLedgerObservation]
-    ) -> Int {
-        max(0, monotonicMilestones(values).count - 1)
-    }
-
-    private static func completeSum(_ values: [Double?]) -> Double? {
-        guard values.allSatisfy({ $0 != nil }) else { return nil }
-        return values.compactMap { $0 }.reduce(0, +)
-    }
-
     private static func isOfficial(
         _ record: V013UsageLedgerRecord
     ) -> Bool {
-        record.providerID.caseInsensitiveCompare("openai")
+        isOfficial(record.providerID)
+    }
+
+    private static func isOfficial(_ providerID: String) -> Bool {
+        providerID.caseInsensitiveCompare("openai")
             == .orderedSame
     }
 }

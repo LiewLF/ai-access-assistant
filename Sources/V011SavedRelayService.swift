@@ -60,13 +60,20 @@ struct V011SavedRelayService: @unchecked Sendable {
         var storedReference: String?
         var previousSecret: String?
         do {
-            _ = try migrationCoordinator.prepareIfNeeded()
+            try Task.checkCancellation()
             let profile = try relayProfileService
                 .normalizedNewProfile(draft)
             _ = try await dependencies.verifyDraft(profile, apiKey)
+            // Discovery may finish after the user leaves, even if its transport
+            // ignores cancellation. Commit only while the addition is active.
+            try Task.checkCancellation()
+            // A profile may have been added while verification was suspended.
+            _ = try relayProfileService.normalizedNewProfile(draft)
             previousSecret = try dependencies.credentialStore.secret(
                 reference: profile.v011CredentialReference
             )
+            try Task.checkCancellation()
+            _ = try migrationCoordinator.prepareIfNeeded()
             try dependencies.credentialStore.store(
                 apiKey,
                 reference: profile.v011CredentialReference
@@ -80,6 +87,9 @@ struct V011SavedRelayService: @unchecked Sendable {
                 profileName: profile.name
             )
         } catch {
+            if (error is CancellationError || Task.isCancelled), storedReference == nil {
+                throw CancellationError()
+            }
             let primaryDescription = error.localizedDescription
             var recoveryDescription: String?
             if let storedReference {

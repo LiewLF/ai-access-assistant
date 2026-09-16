@@ -95,6 +95,11 @@ struct V011SavedRelayActionService: @unchecked Sendable {
                 status:
                     "“\(result.profileName)”已验证并保存；现在可以切换"
             )
+        } catch is CancellationError {
+            return .failure(
+                status: "已取消添加；当前Codex设置未改变",
+                errorMessage: "未保存中转或凭据，可以修改草稿后重新添加。"
+            )
         } catch let failure as V011SavedRelayAddFailure {
             return .failure(
                 status: failure.recoveryDescription == nil

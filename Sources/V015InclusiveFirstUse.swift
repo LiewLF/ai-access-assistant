@@ -32,6 +32,10 @@ struct V015FirstUseGuidance: Equatable, Sendable {
     let secondaryTitle: String?
     let secondaryAction: V015FirstUseGuidanceAction?
 
+    var canDeferVerification: Bool {
+        isVisible && (primaryAction == .checkBasic || primaryAction == .verifyRealTask)
+    }
+
     static let hidden = V015FirstUseGuidance(
         isVisible: false,
         title: "",
@@ -106,7 +110,7 @@ enum V015FirstUseGuidanceResolver {
                 title: "先用官方，完成第\(step)步",
                 detail: step == 1
                     ? "当前已是官方接入，不需要切换中转。先确认基础连接；中转只是可选项。"
-                    : "当前仍是官方接入，不需要切换中转。完成真实任务验证后再开始工作。",
+                    : "当前仍是官方接入，不需要切换中转。可以先验证真实任务，也可以稍后验证；未验证时不会标为已可用。",
                 primaryTitle: step == 1
                     ? "保留官方并继续"
                     : "验证官方真实任务",
@@ -122,7 +126,7 @@ enum V015FirstUseGuidanceResolver {
                 title: "当前使用中转，先完成第\(step)步",
                 detail: step == 1
                     ? "先确认当前中转的基础连接；不会自动改用其他接入。"
-                    : "完成当前中转的真实任务验证后再开始工作；不会自动切换。",
+                    : "可以先验证当前中转的真实任务，也可以稍后验证；不会自动切换或标为已可用。",
                 primaryTitle: step == 1
                     ? "确认当前中转连接"
                     : "验证当前中转任务",

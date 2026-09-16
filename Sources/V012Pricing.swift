@@ -6,6 +6,7 @@ enum V012PricingError: LocalizedError, Equatable {
     case unsupportedManifest
     case responseTooLarge
     case remoteUnavailable
+    case unreadableLocalFile
 
     var errorDescription: String? {
         switch self {
@@ -19,6 +20,8 @@ enum V012PricingError: LocalizedError, Equatable {
             return "远程价目表超过 512 KiB，已停止读取"
         case .remoteUnavailable:
             return "定价来源暂时无法读取；现有价格保持不变"
+        case .unreadableLocalFile:
+            return "已保存价格无法安全读取；原文件已保留，未保存或应用新价格。文件恢复可读后可重试"
         }
     }
 }
@@ -61,7 +64,7 @@ struct V012ModelTokenRate: Codable, Equatable, Identifiable {
 struct V012RelayPricingSnapshot: Codable, Equatable, Identifiable {
     enum SourceKind: String, Codable { case manual, remoteManifest }
 
-    static let schemaVersion = 1
+    static let schemaVersion = 2
 
     let version: Int
     let profileID: String
@@ -72,7 +75,6 @@ struct V012RelayPricingSnapshot: Codable, Equatable, Identifiable {
     let effectiveAt: Date
     let checkedAt: Date
     let automaticUpdates: Bool
-    let revision: String
 
     var id: String { profileID }
 
@@ -98,9 +100,15 @@ struct V012RelayPricingSnapshot: Codable, Equatable, Identifiable {
             && (!automaticUpdates || sourceURL != nil)
             && effectiveAt.timeIntervalSince1970.isFinite
             && checkedAt.timeIntervalSince1970.isFinite
-            && revision.count == 64
-            && revision.allSatisfy {
-                $0.isHexDigit && !$0.isUppercase
+    }
+
+    func hasSamePricing(as other: Self) -> Bool {
+        profileID == other.profileID
+            && currency == other.currency
+            && rates.sorted {
+                $0.model.lowercased() < $1.model.lowercased()
+            } == other.rates.sorted {
+                $0.model.lowercased() < $1.model.lowercased()
             }
     }
 
@@ -151,9 +159,6 @@ struct V012RelayPricingSnapshot: Codable, Equatable, Identifiable {
         )
         let source = normalizedURL?.isEmpty == false
             ? normalizedURL : nil
-        let revisionData = try JSONEncoder().encode(rates)
-            + Data(normalizedCurrency.utf8)
-            + Data((source ?? "manual").utf8)
         let value = Self(
             version: schemaVersion,
             profileID: profileID,
@@ -163,8 +168,7 @@ struct V012RelayPricingSnapshot: Codable, Equatable, Identifiable {
             sourceURL: source,
             effectiveAt: now,
             checkedAt: now,
-            automaticUpdates: automaticUpdates,
-            revision: V011AgentLoopReceipt.sha256(revisionData)
+            automaticUpdates: automaticUpdates
         )
         guard value.isStructurallyValid else {
             throw V012PricingError.invalidValue
@@ -183,23 +187,23 @@ struct V012RelayPricingStore {
 
     let fileURL: URL
     private let fileManager: FileManager
-    private let writer: FableAtomicConfigWriter
+    private let writer: V011ReceiptFileWriter
 
     init(
         fileURL: URL,
-        fileManager: FileManager = .default,
-        writer: FableAtomicConfigWriter = FableAtomicConfigWriter()
+        fileManager: FileManager = .default
     ) {
         self.fileURL = fileURL.standardizedFileURL
         self.fileManager = fileManager
-        self.writer = writer
+        writer = V011ReceiptFileWriter(fileManager: fileManager)
     }
 
     func load() throws -> [String: V012RelayPricingSnapshot] {
         guard fileManager.fileExists(atPath: fileURL.path) else {
             return [:]
         }
-        let values = try fileURL.resourceValues(forKeys: [
+        // A retained URL can cache an earlier file size even after independent recovery.
+        let values = try URL(fileURLWithPath: fileURL.path).resourceValues(forKeys: [
             .isRegularFileKey,
             .isSymbolicLinkKey,
             .fileSizeKey,
@@ -216,7 +220,8 @@ struct V012RelayPricingStore {
             V012RelayPricingDocument.self,
             from: Data(contentsOf: fileURL)
         )
-        guard document.schemaVersion == 1,
+        guard document.schemaVersion
+                == V012RelayPricingSnapshot.schemaVersion,
               document.snapshots.count <= 1_000,
               document.snapshots.allSatisfy(\.isStructurallyValid),
               Set(document.snapshots.map(\.profileID)).count
@@ -230,9 +235,15 @@ struct V012RelayPricingStore {
         )
     }
 
+    func loadForUpdate() throws -> [String: V012RelayPricingSnapshot] {
+        do { return try load() }
+        catch { throw V012PricingError.unreadableLocalFile }
+    }
+
     func commit(
         _ snapshots: [String: V012RelayPricingSnapshot]
     ) throws {
+        _ = try loadForUpdate()
         let values = snapshots.values.sorted {
             $0.profileID < $1.profileID
         }
@@ -250,19 +261,14 @@ struct V012RelayPricingStore {
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(
             V012RelayPricingDocument(
-                schemaVersion: 1,
+                schemaVersion: V012RelayPricingSnapshot.schemaVersion,
                 snapshots: values
             )
         )
         guard data.count <= Self.maximumBytes else {
             throw V012PricingError.responseTooLarge
         }
-        try writer.write(
-            data,
-            to: fileURL,
-            expectedCurrentHash:
-                SessionSyncFileSafety.hashIfPresent(fileURL)
-        )
+        try writer.write(data, to: fileURL)
     }
 }
 
@@ -361,8 +367,7 @@ struct V012PricingManifestFetcher: Sendable {
             sourceURL: sourceURL,
             effectiveAt: effectiveAt,
             checkedAt: observedAt,
-            automaticUpdates: automaticUpdates,
-            revision: V011AgentLoopReceipt.sha256(pair.0)
+            automaticUpdates: automaticUpdates
         )
         guard manifest.schemaVersion == 1,
               snapshot.isStructurallyValid else {
@@ -421,7 +426,6 @@ struct V012CostResult: Equatable {
     let apiEquivalentUSD: Double?
     let relayAmount: Double?
     let relayCurrency: String?
-    let pricingRevision: String?
     let pricingEvidence: String
     let pricingSourceURL: String?
     let pricingCheckedAt: Date?
@@ -435,7 +439,9 @@ enum V012UsageCostCalculator {
         planType: String?,
         serviceTier: String?,
         relayPricing: V012RelayPricingSnapshot?,
-        officialPricing: V013OfficialPricingSnapshot = .current
+        officialPricing: V013OfficialPricingSnapshot = .current,
+        requestBoundariesKnown: Bool = true,
+        apiPricingPolicy: V013APIPricingPolicy = .recordedTier
     ) -> V012CostResult {
         if providerID.caseInsensitiveCompare("openai") != .orderedSame {
             guard let relayPricing,
@@ -445,7 +451,6 @@ enum V012UsageCostCalculator {
                     apiEquivalentUSD: nil,
                     relayAmount: nil,
                     relayCurrency: nil,
-                    pricingRevision: nil,
                     pricingEvidence: "中转未保存该模型定价",
                     pricingSourceURL: nil,
                     pricingCheckedAt: nil
@@ -456,12 +461,25 @@ enum V012UsageCostCalculator {
                 apiEquivalentUSD: nil,
                 relayAmount: amount(calls: calls, rate: rate),
                 relayCurrency: relayPricing.currency,
-                pricingRevision: relayPricing.revision,
                 pricingEvidence:
-                    "中转定价快照 · revision \(relayPricing.revision.prefix(8))",
+                    "中转定价快照 · 来源 \(relayPricing.sourceKind == .manual ? "手动录入" : "远程价目表") · 生效 \(timestamp(relayPricing.effectiveAt)) · 检查 \(timestamp(relayPricing.checkedAt))",
                 pricingSourceURL: relayPricing.sourceURL,
                 pricingCheckedAt: relayPricing.checkedAt
             )
+        }
+        if apiPricingPolicy == .standardReferenceWhenMissing,
+           V013APIPricingPolicy.tierIsMissing(serviceTier) {
+            let reference = calculate(
+                calls: calls, model: model, providerID: providerID, planType: nil,
+                serviceTier: "standard", relayPricing: nil, officialPricing: officialPricing,
+                requestBoundariesKnown: requestBoundariesKnown)
+            return V012CostResult(
+                credits: nil, apiEquivalentUSD: reference.apiEquivalentUSD,
+                relayAmount: nil, relayCurrency: nil,
+                pricingEvidence: "档位未记录；API 按标准价参考，不是实际扣费；credits 保持未知"
+                    + (reference.apiEquivalentUSD == nil ? "；" + reference.pricingEvidence : ""),
+                pricingSourceURL: officialPricing.apiSourceURL,
+                pricingCheckedAt: officialPricing.effectiveAPICheckedAt)
         }
         guard officialPricing.isStructurallyValid,
               let rate = officialPricing.rate(
@@ -473,8 +491,11 @@ enum V012UsageCostCalculator {
                 apiEquivalentUSD: nil,
                 relayAmount: nil,
                 relayCurrency: nil,
-                pricingRevision: nil,
-                pricingEvidence: "当前模型或 service tier 无可用官方价格",
+                pricingEvidence: V013PricingExplanation.missingEvidence(
+                    calls: calls, model: model, serviceTier: serviceTier,
+                    planType: planType, pricing: officialPricing,
+                    requestBoundariesKnown: requestBoundariesKnown
+                ).joined(separator: "；"),
                 pricingSourceURL: nil,
                 pricingCheckedAt: nil
             )
@@ -483,17 +504,27 @@ enum V012UsageCostCalculator {
             .supportsSubscriptionCredits(planType: planType)
             ? creditAmount(calls: calls, rate: rate)
             : nil
+        let gaps = V013PricingExplanation.missingEvidence(
+            calls: calls, model: model, serviceTier: serviceTier,
+            planType: planType, pricing: officialPricing,
+            requestBoundariesKnown: requestBoundariesKnown)
         return V012CostResult(
             credits: credits,
-            apiEquivalentUSD: apiAmount(calls: calls, rate: rate),
+            apiEquivalentUSD: !requestBoundariesKnown
+                && calls.contains(where: { $0.inputTokens > rate.longContextThreshold })
+                ? nil : apiAmount(calls: calls, rate: rate),
             relayAmount: nil,
             relayCurrency: nil,
-            pricingRevision: officialPricing.revision,
             pricingEvidence:
-                "OpenAI 官方 credits 与 API 快照 · revision \(officialPricing.revision.prefix(8))",
+                "OpenAI 官方 credits 与 API 快照 · 生效 \(timestamp(officialPricing.effectiveAt)) · 检查 \(timestamp(officialPricing.checkedAt))"
+                    + (gaps.isEmpty ? "" : "；" + gaps.joined(separator: "；")),
             pricingSourceURL: officialPricing.subscriptionSourceURL,
             pricingCheckedAt: officialPricing.checkedAt
         )
+    }
+
+    private static func timestamp(_ date: Date) -> String {
+        ISO8601DateFormatter().string(from: date)
     }
 
     private static func amount(

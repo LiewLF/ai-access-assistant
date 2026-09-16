@@ -40,9 +40,7 @@ struct BeginnerHistoryView: View {
     @State private var safeModeKeepCurrent = false
     @State private var localError: String?
     @State private var copyTarget: V011SessionRow?
-    @State private var copyTask: Task<Void, Never>?
-    @State private var isCopyingVisibleContent = false
-    @State private var copyStatus: String?
+    @StateObject private var continuationCopy = SessionContinuationCopyController()
     @State private var timelineCopyStatus: String?
     @State private var externalImportTask: Task<Void, Never>?
     @State private var externalImportSource: URL?
@@ -428,20 +426,26 @@ struct BeginnerHistoryView: View {
                     .foregroundStyle(.secondary)
                     recoveryAuditTimelineCard(recoverySnapshot)
                 }
-                if isCopyingVisibleContent {
+                if continuationCopy.isCopying {
                     Label(
                         "正在读取这一个会话的可见内容…",
                         systemImage: "doc.on.clipboard"
                     )
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                } else if let copyStatus {
+                    Button("取消续接包读取") { continuationCopy.cancel() }
+                        .accessibilityIdentifier("history.cancel-continuation-copy")
+                } else if let copyStatus = continuationCopy.status {
                     Label(
                         copyStatus,
                         systemImage: "checkmark.circle.fill"
                     )
                     .font(.callout)
                     .foregroundStyle(.green)
+                }
+                if let error = continuationCopy.errorMessage {
+                    Label(BeginnerText.friendly(error), systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
                 }
                 if historyOrganization == .workspaces {
                     workspaceOverviewCard
@@ -612,9 +616,7 @@ struct BeginnerHistoryView: View {
             model.cancelWorkspaceListing()
             externalImportTask?.cancel()
             externalImportTask = nil
-            copyTask?.cancel()
-            copyTask = nil
-            isCopyingVisibleContent = false
+            continuationCopy.cancel()
         }
         .confirmationDialog(
             "导入外部会话？",
@@ -1509,7 +1511,7 @@ struct BeginnerHistoryView: View {
             Button("生成精简续接包") {
                 copyTarget = session
             }
-            .disabled(isCopyingVisibleContent)
+            .disabled(continuationCopy.isCopying)
         }
         .accessibilityIdentifier(
             "build89.session-more-actions"
@@ -1666,37 +1668,9 @@ struct BeginnerHistoryView: View {
     private func copyVisibleContent(
         _ session: V011SessionRow
     ) {
-        copyTask?.cancel()
-        isCopyingVisibleContent = true
-        copyStatus = nil
         localError = nil
-        copyTask = Task {
-            do {
-                let packet = try await model
-                    .continuationPacket(for: session)
-                try Task.checkCancellation()
-                NSPasteboard.general.clearContents()
-                guard NSPasteboard.general.setString(
-                    packet.pasteDocument,
-                    forType: .string
-                ) else {
-                    throw SessionCenterError
-                        .bodyUnavailable
-                }
-                copyStatus = packet.continuationStatusNote
-                    + "精简续接包已复制（"
-                    + "\(packet.messages.count)条，"
-                    + "跳过\(packet.omittedMessageCount)条）。"
-                    + "请由你在Codex新建会话后手动粘贴。"
-                localError = nil
-            } catch is CancellationError {
-            } catch {
-                localError =
-                    "精简续接包没有复制："
-                    + error.localizedDescription
-            }
-            isCopyingVisibleContent = false
-            copyTask = nil
+        continuationCopy.start {
+            try await model.continuationPacket(for: session)
         }
     }
 }

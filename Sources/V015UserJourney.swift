@@ -48,11 +48,13 @@ enum V014VerificationJourneyResolver {
     ) -> V014VerificationJourneyStage {
         if hasPendingRecovery { return .recoveryRequired }
         if isCheckingBasic { return .checkingBasic }
+        if isVerifyingRealTask { return .verifyingRealTask }
+        if isRealTaskVerified && !hasBasicFailure && !hasRealTaskFailure {
+            return .ready
+        }
         guard hasBasicEvidence else {
             return hasBasicFailure ? .basicFailed : .needsBasic
         }
-        if isVerifyingRealTask { return .verifyingRealTask }
-        if isRealTaskVerified { return .ready }
         if hasRealTaskFailure { return .realTaskFailed }
         return .needsRealTask
     }

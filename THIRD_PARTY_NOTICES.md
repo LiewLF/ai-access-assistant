@@ -33,4 +33,4 @@ AI接入助手整体采用 `AGPL-3.0-only`。
 
 `rusqlite` 使用 `bundled` 特性构建 SQLite；SQLite 核心处于 public domain。精确版本以 `SessionCore/Cargo.lock` 为准，各组件版权与许可证仍归原作者所有。
 
-本 source-only preview 不分发二进制。未来公开二进制前，必须生成并人工核对完整传递依赖版权与许可证材料。
+本 source-only 连续源码快照（非 tag、非 Release） 不分发二进制。未来公开二进制前，必须生成并人工核对完整传递依赖版权与许可证材料。

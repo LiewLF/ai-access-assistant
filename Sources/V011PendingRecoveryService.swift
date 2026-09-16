@@ -83,8 +83,7 @@ struct V011PendingRecoveryService: @unchecked Sendable {
             if recorder.result == nil {
                 let result = try verifier.verify(
                     userConsented: true,
-                    expectedProviderID: nil,
-                    expectedConfigHash: nil
+                    expectedRouteIdentity: nil
                 )
                 recorder.record(result)
                 try receiptStore.commit(result.receipt)

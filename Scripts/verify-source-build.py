@@ -242,6 +242,12 @@ def main() -> int:
         cargo = pathlib.Path(os.environ.get("AI_ACCESS_CARGO", cargo_home / "bin" / "cargo"))
         rustc = pathlib.Path(os.environ.get("AI_ACCESS_RUSTC", cargo.parent / "rustc"))
         require(os.access(cargo, os.X_OK) and os.access(rustc, os.X_OK), "preflight", "locked-rust-toolchain-missing:run-Scripts/bootstrap-rust-toolchain.sh")
+        if "AI_ACCESS_CPA_RUNTIME" in (ROOT / "build.sh").read_text(encoding="utf-8"):
+            runtime_value = os.environ.get("AI_ACCESS_CPA_RUNTIME", "")
+            require(bool(runtime_value), "preflight", "cpa-runtime-missing:build-pinned-sources-with-Scripts/build-cpa-collector.py-then-export-AI_ACCESS_CPA_RUNTIME")
+            runtime = pathlib.Path(runtime_value)
+            require(runtime.is_dir(), "preflight", "cpa-runtime-missing:runtime-directory-not-found")
+            require((runtime / "build-receipt.json").is_file(), "preflight", "cpa-runtime-incomplete:pinned-build-receipt-required")
         environment = os.environ.copy()
         environment.update(
             {

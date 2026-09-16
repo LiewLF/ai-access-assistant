@@ -53,13 +53,17 @@ enum V015FirstUseRuntimeProjectionResolver {
         let homeOutcome = journey.homeOutcome
         let guidance = V015FirstUseGuidanceResolver.resolve(
             V015FirstUseGuidanceInput(
-                route: journey.route,
+                route: accessModel.needsCurrentStateRead ? .unknown : journey.route,
                 codexInstalled: codexInstalled,
                 savedRelayCount: accessModel.savedProfiles.count,
                 verificationStage: journey.verificationStage,
                 hasBlockingIssue:
                     homeOutcome == .recoverAccess
-                    || homeOutcome == .resolveAccessFailure,
+                    || homeOutcome == .resolveAccessFailure
+                    || V016RuntimeEvidenceDrift.detected(
+                        receipt: accessModel.agentLoopReceipt,
+                        live: accessModel.liveState
+                    ),
                 isReadingCurrentState: accessModel.isRefreshing
             )
         )

@@ -3,7 +3,7 @@ import Foundation
 @MainActor
 protocol V011UserReadinessControllerDelegate: AnyObject {
     var canRefreshOfficialUsage: Bool { get }
-    var userReadinessUsesOfficialAccess: Bool { get }
+    var officialUsageRefreshUnavailableReason: String? { get }
     var userReadinessSavedRelayReceiptsForCommit:
         [String: V011SavedRelayReadinessReceipt] { get }
 
@@ -64,10 +64,9 @@ final class V011UserReadinessController {
     ) {
         guard let delegate else { return }
         guard delegate.canRefreshOfficialUsage else {
-            if !delegate.userReadinessUsesOfficialAccess {
-                delegate.userReadinessOfficialUsageDidReject(
-                    "仅当前使用Codex官方时读取官方额度"
-                )
+            if let reason = delegate
+                .officialUsageRefreshUnavailableReason {
+                delegate.userReadinessOfficialUsageDidReject(reason)
             }
             return
         }
@@ -84,20 +83,10 @@ final class V011UserReadinessController {
                 return
             }
             delegate.userReadinessOfficialUsageDidBecomeIdle()
-            switch outcome {
-            case .success:
-                guard delegate.userReadinessUsesOfficialAccess else {
-                    delegate.userReadinessOfficialUsageDidReject(
-                        "读取期间接入已变化，本次额度未显示"
-                    )
-                    return
-                }
-                delegate.userReadinessOfficialUsageDidReceive(outcome)
-            case .failure:
-                delegate.userReadinessOfficialUsageDidReceive(outcome)
-            case .cancelled:
-                return
-            }
+            // The snapshot describes the official account read by the
+            // isolated read-only process; a live relay route does not make
+            // that evidence wrong, so it is applied as-is.
+            delegate.userReadinessOfficialUsageDidReceive(outcome)
         }
     }
 

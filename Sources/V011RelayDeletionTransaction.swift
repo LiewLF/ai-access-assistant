@@ -94,18 +94,22 @@ struct V011RelayDeletionJournalStore {
         )
     }
 
+    func pendingReadOnly() throws -> [V011RelayDeletionJournal] {
+        try all(readOnly: true).filter(\.phase.isPending)
+    }
+
     func pending() throws -> [V011RelayDeletionJournal] {
         try all().filter(\.phase.isPending)
             .sorted { $0.startedAt < $1.startedAt }
     }
 
-    func all() throws -> [V011RelayDeletionJournal] {
+    func all(readOnly: Bool = false) throws -> [V011RelayDeletionJournal] {
         guard FileManager.default.fileExists(
             atPath: rootURL.path
         ) else {
             return []
         }
-        try prepareRoot()
+        try prepareRoot(readOnly: readOnly)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try FileManager.default.contentsOfDirectory(
@@ -136,7 +140,7 @@ struct V011RelayDeletionJournalStore {
         }
     }
 
-    private func prepareRoot() throws {
+    private func prepareRoot(readOnly: Bool = false) throws {
         if FileManager.default.fileExists(
             atPath: rootURL.path
         ) {
@@ -152,12 +156,14 @@ struct V011RelayDeletionJournalStore {
                     .invalidJournal
             }
         } else {
+            guard !readOnly else { throw V011RelayDeletionTransactionError.invalidJournal }
             try FileManager.default.createDirectory(
                 at: rootURL,
                 withIntermediateDirectories: true,
                 attributes: [.posixPermissions: 0o700]
             )
         }
+        guard !readOnly else { return }
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o700],
             ofItemAtPath: rootURL.path

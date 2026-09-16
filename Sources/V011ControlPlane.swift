@@ -416,9 +416,10 @@ struct V011UnifiedSwitchCoordinator: @unchecked Sendable {
         try await pendingRecoveryCoordinator.recoverPending()
     }
 
-    func recoveryDisposition() throws
-        -> V011RecoveryDisposition {
-        try pendingRecoveryCoordinator.recoveryDisposition()
+    func recoveryDisposition(
+        onPreview: ((String, FablePreparedRecoveryConfiguration) -> Void)? = nil
+    ) throws -> V011RecoveryDisposition {
+        try pendingRecoveryCoordinator.recoveryDisposition(onPreview: onPreview)
     }
 
     func keepCurrentStateAndEndPendingRecovery()

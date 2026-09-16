@@ -7,6 +7,8 @@ struct BeginnerUnifiedReadinessCard: View {
     let accessibilityIdentifier: String
     let actionEnabled: Bool
     let perform: (V016AccessReadinessPrimaryAction) -> Void
+    @State private var showsEvidenceLayers = false
+    @State private var showsSafetyEvidence = false
 
     init(
         decision: V016AccessReadinessDecision,
@@ -23,82 +25,20 @@ struct BeginnerUnifiedReadinessCard: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            Image(systemName: icon)
-                .font(.system(size: 29))
-                .foregroundStyle(color)
-                .frame(width: 38)
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Text(routeTitle)
-                        .font(.caption.weight(.semibold))
-                    Text(decision.evidenceSource.title)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Text(decision.conclusion)
-                    .font(.title3.bold())
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(decision.explanation)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                VStack(alignment: .leading, spacing: 5) {
-                    ForEach(decision.evidenceLayers, id: \.kind) {
-                        layer in
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(layer.kind.rawValue)
-                                .frame(width: 120, alignment: .leading)
-                                .foregroundStyle(.secondary)
-                            Text(layer.status)
-                                .fontWeight(.semibold)
-                        }
-                        .font(.caption)
-                        Text(layer.detail)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(
-                                horizontal: false,
-                                vertical: true
-                            )
-                    }
-                }
-                .padding(.top, 3)
-                if !decision.evidence.isEmpty {
-                    DisclosureGroup("查看安全依据") {
-                        VStack(alignment: .leading, spacing: 3) {
-                            ForEach(
-                                Array(decision.evidence.enumerated()),
-                                id: \.offset
-                            ) { _, item in
-                                Text(item)
-                                    .font(.caption.monospaced())
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled)
-                            }
-                        }
-                        .padding(.top, 4)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 16) {
+                statusIcon
+                summary.frame(minWidth: 260)
+                Spacer(minLength: 12)
+                primaryControl
             }
-            Spacer(minLength: 12)
-            if decision.state == .checking {
-                ProgressView()
-                    .controlSize(.small)
-                    .accessibilityLabel(decision.conclusion)
-            } else if let primaryAction = decision.primaryAction {
-                Button(primaryAction.title) {
-                    perform(primaryAction)
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 16) {
+                    statusIcon
+                    summary
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(!actionEnabled)
-                .accessibilityLabel(primaryAction.title)
-                .accessibilityHint(decision.explanation)
-                .accessibilityIdentifier(
-                    "\(accessibilityIdentifier).primary"
-                )
+                primaryControl
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
         .padding(18)
@@ -111,6 +51,90 @@ struct BeginnerUnifiedReadinessCard: View {
         .accessibilityLabel(decision.conclusion)
         .accessibilityHint(decision.explanation)
         .accessibilityIdentifier(accessibilityIdentifier)
+    }
+
+    private var statusIcon: some View {
+        Image(systemName: icon)
+            .font(.system(size: 29))
+            .foregroundStyle(color)
+            .frame(width: 38)
+    }
+
+    private var summary: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(routeTitle)
+                    .font(.caption.weight(.semibold))
+                Text(decision.evidenceSource.title)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Text(decision.conclusion)
+                .font(.title3.bold())
+                .fixedSize(horizontal: false, vertical: true)
+            Text(decision.explanation)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            DisclosureGroup("查看验证与恢复依据", isExpanded: $showsEvidenceLayers) {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(decision.evidenceLayers, id: \.kind) { layer in
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(layer.kind.rawValue)
+                                .frame(width: 120, alignment: .leading)
+                                .foregroundStyle(.secondary)
+                            Text(layer.status).fontWeight(.semibold)
+                        }
+                        .font(.caption)
+                        Text(layer.detail)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .font(.caption)
+            .padding(.top, 3)
+            if !decision.evidence.isEmpty {
+                DisclosureGroup("查看安全依据", isExpanded: $showsSafetyEvidence) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(
+                            Array(decision.evidence.enumerated()),
+                            id: \.offset
+                        ) { _, item in
+                            Text(item)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var primaryControl: some View {
+        if decision.state == .checking {
+            ProgressView()
+                .controlSize(.small)
+                .accessibilityLabel(decision.conclusion)
+        } else if let primaryAction = decision.primaryAction {
+            Button(primaryAction.title) {
+                perform(primaryAction)
+            }
+            .buttonStyle(.borderedProminent)
+            .fixedSize()
+            .disabled(!actionEnabled)
+            .accessibilityLabel(primaryAction.title)
+            .accessibilityHint(decision.explanation)
+            .accessibilityIdentifier(
+                "\(accessibilityIdentifier).primary"
+            )
+        }
     }
 
     private var routeTitle: String {

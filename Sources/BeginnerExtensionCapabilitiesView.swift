@@ -126,14 +126,12 @@ struct BeginnerExtensionCapabilitiesView: View {
         }
         .sheet(isPresented: $discoveryOpen) {
             CapabilityDiscoveryView()
-                .frame(minWidth: 900, minHeight: 680)
         }
         .sheet(isPresented: $verificationOpen) {
             BeginnerCapabilityVerificationView(
                 model: model,
                 accessModel: accessModel
             )
-            .frame(minWidth: 780, minHeight: 680)
         }
         .sheet(isPresented: $localTrustCenterOpen) {
             LocalTrustCenterView(
@@ -174,7 +172,6 @@ struct BeginnerExtensionCapabilitiesView: View {
                     catalogImportHelpProfile = nil
                 }
             )
-            .frame(minWidth: 720, minHeight: 560)
         }
         .sheet(item: $catalogImportReview) { review in
             BeginnerManagedModelCatalogImportReviewView(
@@ -190,7 +187,6 @@ struct BeginnerExtensionCapabilitiesView: View {
                     catalogImportReview = nil
                 }
             )
-            .frame(minWidth: 760, minHeight: 560)
         }
         .fileImporter(
             isPresented: $catalogImporterOpen,

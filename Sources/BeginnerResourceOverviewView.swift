@@ -4,15 +4,23 @@ struct V011UnifiedResourceOverviewCard: View {
     @ObservedObject var accessModel: V011AccessModel
     @ObservedObject var historyModel: V011HistoryModel
     @ObservedObject var usageModel: V012UsageTruthModel
+    @ObservedObject private var collection = V013CPACollectionModel.shared
     let onFailureAction: (V013FailurePrimaryAction) -> Void
+    var currentReadiness: V016AccessReadinessDecision? = nil
 
     @State private var pricingProfile: CodexRelayProfile?
     @State private var officialDetailsExpanded = false
     @State private var relayDetailsExpanded = false
+    @State private var resourceDetailsExpanded = false
+    @StateObject private var usageHistoryRefresh = V013UsageHistoryRefresh()
+
+    private var collectionNeedsAttention: Bool {
+        collection.needsShutdown || collection.isBusy || collection.error != nil
+    }
 
     var body: some View {
         let items = accessModel.unifiedResourceOverview(
-            maximumSavedRelays: 4
+            maximumSavedRelays: 4, currentReadiness: currentReadiness
         )
         let officialItem = items.first { $0.kind == .official }
         let relayItems = items.filter { $0.kind == .savedRelay }
@@ -25,7 +33,7 @@ struct V011UnifiedResourceOverviewCard: View {
                         systemImage: "gauge.open.with.lines.needle.33percent"
                     )
                     .font(.title2.weight(.semibold))
-                    Text("先判断套餐、剩余和满额价值，再看证据与明细。")
+                    Text("官方套餐、剩余与重置时间；本机用量和调用明细按需展开。")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -36,16 +44,29 @@ struct V011UnifiedResourceOverviewCard: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    Button(
-                        accessModel.officialUsageSnapshot == nil
-                            ? "读取官方资源" : "刷新官方资源"
-                    ) {
-                        accessModel.refreshOfficialUsage(
-                            threadID: latestOfficialThreadID
-                        )
+                    VStack(alignment: .trailing, spacing: 3) {
+                        Button(
+                            accessModel.officialUsageSnapshot == nil
+                                ? "读取官方资源" : "刷新官方资源"
+                        ) {
+                            accessModel.refreshOfficialUsage(
+                                threadID: latestOfficialThreadID
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!accessModel.canRefreshOfficialUsage)
+                        if let reason = accessModel
+                            .officialUsageRefreshAvailability
+                            .unavailableReason {
+                            Text(reason)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.trailing)
+                                .accessibilityIdentifier(
+                                    "usage.refresh-unavailable-reason"
+                                )
+                        }
                     }
-                    .buttonStyle(.bordered)
-                    .disabled(!accessModel.canRefreshOfficialUsage)
                 }
             }
 
@@ -54,14 +75,21 @@ struct V011UnifiedResourceOverviewCard: View {
             }
 
             if let failure = accessModel.officialUsageFailurePresentation {
+                let refreshState = accessModel
+                    .officialUsageCardPresentation
                 VStack(alignment: .leading, spacing: 6) {
                     Label(
-                        failure.conclusion,
+                        refreshState.refreshFailureText
+                            ?? failure.conclusion,
                         systemImage: "exclamationmark.circle"
                     )
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.orange)
-                    Text(failure.explanation)
+                    Text(
+                        refreshState.refreshFailureText == nil
+                            ? failure.explanation
+                            : "刷新失败原因：\(failure.explanation)"
+                    )
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     BeginnerFailureEvidenceDisclosure(
@@ -78,53 +106,79 @@ struct V011UnifiedResourceOverviewCard: View {
                     .foregroundStyle(.orange)
             }
 
-            V013WeeklyCapacitySummaryView(
-                status: usageModel.weeklyUsageStatus
-            )
-
-            if let officialItem {
-                officialDetails(officialItem)
+            if collectionNeedsAttention {
+                V013CPACollectionControlsView()
             }
 
-            if !relayItems.isEmpty {
-                DisclosureGroup(isExpanded: $relayDetailsExpanded) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(relayItems) { item in
-                            resourceRow(item)
-                        }
-                        if accessModel.savedProfiles.count > shownRelays {
-                            Text(
-                                "另有 \(accessModel.savedProfiles.count - shownRelays) 条已保存中转；请到“接入与切换”查看。"
-                            )
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        }
+            DisclosureGroup(isExpanded: $resourceDetailsExpanded) {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let local = usageModel.usagePresentation?.local {
+                        V013LocalUsageReferenceView(value: local)
                     }
-                    .padding(.top, 7)
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("已保存中转（\(accessModel.savedProfiles.count)）")
-                            .font(.subheadline.weight(.semibold))
-                        Text("切换线路或核对中转余额、定价时展开")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    if usageHistoryRefresh.isLoadingHistory || usageModel.isRefreshing {
+                        Label("正在更新本机已读用量",
+                            systemImage: "clock")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
+
+                    if let officialItem {
+                        officialDetails(officialItem)
+                    }
+
+                    if !relayItems.isEmpty {
+                        DisclosureGroup(isExpanded: $relayDetailsExpanded) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(relayItems) { item in
+                                    resourceRow(item)
+                                }
+                                if accessModel.savedProfiles.count > shownRelays {
+                                    Text(
+                                        "另有 \(accessModel.savedProfiles.count - shownRelays) 条已保存中转；请到“接入与切换”查看。"
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.top, 7)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("已保存中转（\(accessModel.savedProfiles.count)）")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("切换线路或核对中转余额、定价时展开")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(11)
+                        .background(
+                            .secondary.opacity(0.045),
+                            in: RoundedRectangle(cornerRadius: 10)
+                        )
+                    }
+
+                    V012RecentUsageView(
+                        model: usageModel,
+                        planType: accessModel.officialUsageSnapshot?.planType,
+                        profiles: accessModel.savedProfiles
+                    )
                 }
-                .padding(11)
-                .background(
-                    .secondary.opacity(0.045),
-                    in: RoundedRectangle(cornerRadius: 10)
-                )
+                .padding(.top, 8)
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("本机用量与资源明细").font(.headline)
+                    Text("已读 Token、金额参考、credits、中转和最近请求；本机用量展开后更新")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text(usageModel.status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("usage.refresh-status")
+                }
             }
-
-            V012RecentUsageView(
-                model: usageModel,
-                planType: accessModel.officialUsageSnapshot?.planType,
-                profiles: accessModel.savedProfiles
-            )
+            .accessibilityIdentifier("build195.home.resource-details")
 
             Text(
-                "窗口百分比不是精确剩余 token；token 与 credits 金额均为活动或估算，不是账单。未知余额不会被推测。"
+                "本机已读 Token 不是套餐总量或剩余额度；API 参考金额不是订阅账单，credits 余额单独显示。"
             )
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -137,20 +191,33 @@ struct V011UnifiedResourceOverviewCard: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("本周官方资源与按需明细")
         .accessibilityHint(
-            "先显示官方套餐、每周剩余、重置时间与满额估算；证据、中转和请求明细可展开。"
+            "先显示官方套餐、每周剩余和重置时间；本机用量、金额依据、中转和请求明细可展开。"
         )
-        .task {
+        .task(id: resourceDetailsExpanded) {
+            guard resourceDetailsExpanded else {
+                usageHistoryRefresh.cancel(model: usageModel)
+                return
+            }
             if historyModel.rows.isEmpty {
                 historyModel.loadFirstPage(provider: nil)
             }
             refreshCompletedUsage()
             await usageModel.syncPricingIfDue()
         }
-        .onChange(of: historyModel.rows) { _, _ in
-            refreshCompletedUsage()
-        }
         .onChange(of: accessModel.officialUsageSnapshot) { _, _ in
             refreshCompletedUsage()
+        }
+        .task(id: resourceDetailsExpanded && collection.isCollecting) {
+            guard resourceDetailsExpanded && collection.isCollecting else { return }
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(10)) } catch { return }
+                if collection.isCollecting {
+                    refreshCompletedUsage()
+                }
+            }
+        }
+        .onDisappear {
+            usageHistoryRefresh.cancel(model: usageModel)
         }
         .sheet(item: $pricingProfile) { profile in
             V012RelayPricingEditorView(
@@ -206,7 +273,7 @@ struct V011UnifiedResourceOverviewCard: View {
                     value: presentation.planText,
                     note: presentation.isFresh
                         ? "决定使用哪类官方资源"
-                        : "过期值仅供回看，请刷新"
+                        : presentation.staleValueHint
                 )
                 summaryMetric(
                     title: "本周已用 / 剩余",
@@ -287,9 +354,9 @@ struct V011UnifiedResourceOverviewCard: View {
             .padding(.top, 7)
         } label: {
             VStack(alignment: .leading, spacing: 2) {
-                Text("已购 credits、用量控制与官方证据")
+                Text("官方 credits 余额、用量控制与官方证据")
                     .font(.subheadline.weight(.semibold))
-                Text("购买额外资源或排查读数时展开")
+                Text("\(item.balance)；与套餐周期额度分别显示")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -299,7 +366,7 @@ struct V011UnifiedResourceOverviewCard: View {
             .secondary.opacity(0.045),
             in: RoundedRectangle(cornerRadius: 10)
         )
-        .accessibilityHint("展开后显示已购 credits、用量控制、模型、来源和刷新时间")
+        .accessibilityHint("展开后显示官方 credits 余额、用量控制、模型、来源和刷新时间")
     }
 
     private func resourceRow(
@@ -432,11 +499,12 @@ struct V011UnifiedResourceOverviewCard: View {
     }
 
     private func refreshCompletedUsage() {
-        usageModel.refresh(
-            rows: historyModel.recentRows,
-            historyHasMore: historyModel.hasMore,
-            officialSnapshot: accessModel.officialUsageSnapshot,
-            profiles: accessModel.savedProfiles
-        )
+        guard resourceDetailsExpanded else { return }
+        usageHistoryRefresh.refresh(model: usageModel,
+            recentRows: historyModel.recentRows,
+            snapshot: accessModel.officialUsageSnapshot,
+            profiles: accessModel.savedProfiles) { windowStart in
+                try await historyModel.readUsageWindowHistory(windowStart: windowStart)
+            }
     }
 }

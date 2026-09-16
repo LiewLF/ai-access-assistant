@@ -151,7 +151,6 @@ struct BeginnerDiagnosticsView: View {
                 model: model,
                 accessModel: accessModel
             )
-            .frame(minWidth: 780, minHeight: 680)
         }
         .confirmationDialog(
             "确认第1步基础连接？",
@@ -185,7 +184,8 @@ struct BeginnerDiagnosticsView: View {
         }
         .sheet(item: $selectedRepairPreview) { preview in
             BeginnerRecoveryRepairPreviewView(
-                preview: preview
+                preview: preview,
+                canConfirm: accessModel.canRunDeterministicRepair
             ) { fingerprint in
                 accessModel.runDeterministicRepair(
                     userConsented: true,
@@ -339,25 +339,11 @@ struct BeginnerDiagnosticsView: View {
                 icon: "arrow.triangle.2.circlepath.circle.fill"
             )
 
-            Label(
-                accessModel.recoveryDisposition
-                    == .decisionRequired
-                    ? "上次切换没有完成，当前设置已保留。"
-                    : (
-                        accessModel.recoveryDisposition
-                            == .recoverable
-                            ? "发现未完成操作，可继续最小修复"
-                            : "没有待恢复的切换操作"
-                    ),
-                systemImage:
-                    accessModel.recoveryDisposition == .none
-                        ? "checkmark.circle.fill"
-                        : "exclamationmark.octagon.fill"
-            )
-            .font(.headline)
-            .foregroundStyle(
-                accessModel.recoveryDisposition == .none
-                    ? Color.green : Color.orange
+            BeginnerUnifiedReadinessCard(
+                decision: unifiedReadinessDecision,
+                accessibilityIdentifier: "diagnostics.recovery.readiness",
+                actionEnabled: unifiedReadinessActionEnabled,
+                perform: performUnifiedReadinessAction
             )
 
             VStack(alignment: .leading, spacing: 7) {
@@ -469,22 +455,6 @@ struct BeginnerDiagnosticsView: View {
                 .foregroundStyle(.red)
             }
 
-            if accessModel.recoveryDisposition
-                == .decisionRequired {
-                Label(
-                    "历史记录暂时无法安全处理。助手不会删除聊天内容，也不会覆盖当前设置。",
-                    systemImage: "checkmark.shield.fill"
-                )
-                .font(.callout.weight(.medium))
-                .foregroundStyle(.orange)
-                Label(
-                    "先结束上次操作，再重新读取当前状态；当前设置和聊天内容保持不变。",
-                    systemImage: "hand.raised.fill"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-
             VStack(alignment: .leading, spacing: 8) {
                 Label(
                     "错误不会锁死全部入口："
@@ -524,64 +494,67 @@ struct BeginnerDiagnosticsView: View {
                 .foregroundStyle(.blue)
             }
 
-            HStack {
-                Button(
-                    accessModel.isCheckingCurrentConnection
-                        ? "正在检测连接" : "检测连接"
-                ) {
-                    confirmsBasicConnection = true
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(
-                    !accessModel.canCheckCurrentConnection
-                )
-                Button("重新读取状态") {
-                    accessModel.refresh()
-                }
-                .disabled(
-                    accessModel.isWorking
-                        || accessModel.isRefreshing
-                        || accessModel
-                            .isCheckingCurrentConnection
-                        || accessModel.isVerifyingAgentLoop
-                )
-                if accessModel.hasCurrentBasicConnectionEvidence,
-                   !accessModel.isAgentLoopVerified,
-                   !accessModel.hasPendingRecovery {
-                    Button("验证真实任务") {
-                        confirmsRealAgentLoop = true
+            DisclosureGroup("其他检测与恢复操作") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Button(
+                        accessModel.isCheckingCurrentConnection
+                            ? "正在检测连接" : "检测连接"
+                    ) {
+                        confirmsBasicConnection = true
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(
+                        !accessModel.canCheckCurrentConnection
+                    )
+                    Button("重新读取状态") {
+                        accessModel.refresh()
                     }
                     .disabled(
-                        !accessModel.canVerifyRealAgentLoop
+                        accessModel.isWorking
+                            || accessModel.isRefreshing
+                            || accessModel
+                                .isCheckingCurrentConnection
+                            || accessModel.isVerifyingAgentLoop
                     )
-                }
-                if accessModel.hasExecutableRecoveryAction {
-                    Button("查看修复预览") {
-                        selectedRepairPreview =
-                            accessModel.recoveryRepairPreview
+                    if accessModel.hasCurrentBasicConnectionEvidence,
+                       !accessModel.isAgentLoopVerified,
+                       !accessModel.hasPendingRecovery {
+                        Button("验证真实任务") {
+                            confirmsRealAgentLoop = true
+                        }
+                        .disabled(
+                            !accessModel.canVerifyRealAgentLoop
+                        )
                     }
-                    .disabled(
-                        !accessModel.canRunDeterministicRepair
-                    )
-                } else if accessModel.recoveryDisposition
-                    == .decisionRequired {
-                    Button("验证并继续使用当前轨") {
-                        accessModel
-                            .acceptCurrentRelayAndEndPendingSwitch()
+                    if accessModel.hasExecutableRecoveryAction {
+                        Button("查看修复预览") {
+                            selectedRepairPreview =
+                                accessModel.recoveryRepairPreview
+                        }
+                        .disabled(
+                            !accessModel.canRunDeterministicRepair
+                        )
+                    } else if accessModel.recoveryDisposition
+                        == .decisionRequired {
+                        Button("验证并继续使用当前轨") {
+                            accessModel
+                                .acceptCurrentRelayAndEndPendingSwitch()
+                        }
+                        .disabled(
+                            !accessModel
+                                .canAcceptCurrentRelayAndEndPendingSwitch
+                        )
+                        Button("保留当前设置并结束上次操作") {
+                            accessModel.keepCurrentStateAndEndPendingSwitch()
+                        }
+                        .disabled(
+                            !accessModel
+                                .canKeepCurrentStateAndEndPendingSwitch
+                        )
                     }
-                    .disabled(
-                        !accessModel
-                            .canAcceptCurrentRelayAndEndPendingSwitch
-                    )
-                    Button("保留当前设置并结束上次操作") {
-                        accessModel.keepCurrentStateAndEndPendingSwitch()
-                    }
-                    .disabled(
-                        !accessModel
-                            .canKeepCurrentStateAndEndPendingSwitch
-                    )
                 }
             }
+            .accessibilityIdentifier("diagnostics.recovery.other-actions")
             Text(V015PassiveStateReadBoundary.detail)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -631,6 +604,10 @@ struct BeginnerDiagnosticsView: View {
             return false
         }
         switch action {
+        case .previewRecovery:
+            return accessModel.canRunDeterministicRepair
+        case .keepCurrentConfiguration:
+            return accessModel.canKeepCurrentConfigurationAndEndPendingSwitch
         case .checkBasicConnection:
             return accessModel.canCheckCurrentConnection
         case .verifyRealTask:
@@ -654,8 +631,14 @@ struct BeginnerDiagnosticsView: View {
         case .previewRecovery:
             selectedRepairPreview =
                 accessModel.recoveryRepairPreview
+        case .keepCurrentConfiguration:
+            accessModel.keepCurrentConfigurationAndEndPendingSwitch()
         case .openDiagnostics:
-            tool = .transactions
+            if tool == .transactions, let preview = accessModel.recoveryRepairPreview {
+                selectedRepairPreview = preview
+            } else {
+                tool = .transactions
+            }
         case let .resolveFailure(failureAction):
             performFailurePrimaryAction(failureAction)
         case let .performDoctorAction(doctorAction):
@@ -709,7 +692,6 @@ struct BeginnerDiagnosticsView: View {
         case .reviewTLSAndProxy, .checkNetwork,
                 .reviewToolPermission,
                 .reviewResponsesCompatibility,
-                .stopOtherConfigurationTools,
                 .openAdvancedDiagnostics:
             tool = .health
         }
