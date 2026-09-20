@@ -58,8 +58,9 @@ if [[ "$PRIVATE_NO_HASH_PACKAGE" == "1" ]]; then
     "212") EXPECTED_LOCAL_BUILD="212" ;;
     "220") EXPECTED_LOCAL_BUILD="220" ;;
     "230") EXPECTED_LOCAL_BUILD="230" ;;
+    "231") EXPECTED_LOCAL_BUILD="231" ;;
     *)
-      echo "AI_ACCESS_PRIVATE_NO_HASH_PACKAGE_BUILD only permits Build187, Build188, Build189, Build190, Build191, Build192, Build193, Build194, Build195, Build196, Build197, Build198, Build199, Build200, Build201, Build202, Build203, Build204, Build205, Build206, Build207, Build208, Build209, Build210, Build211, Build212, Build220 or Build230" >&2
+      echo "AI_ACCESS_PRIVATE_NO_HASH_PACKAGE_BUILD only permits Build187, Build188, Build189, Build190, Build191, Build192, Build193, Build194, Build195, Build196, Build197, Build198, Build199, Build200, Build201, Build202, Build203, Build204, Build205, Build206, Build207, Build208, Build209, Build210, Build211, Build212, Build220, Build230 or Build231" >&2
       exit 1
       ;;
   esac
