@@ -21,6 +21,7 @@ struct V011CurrentConnectionVerifier: @unchecked Sendable {
             String
         ) async throws -> Void)? = nil
     ) async throws -> V011CurrentConnectionVerification {
+        try Task.checkCancellation()
         let installation = try versionDiscovery.discover()
         guard let resolvedContractEntry =
                 installation.contractEntry,
@@ -77,6 +78,7 @@ struct V011CurrentConnectionVerifier: @unchecked Sendable {
             verificationFailure = error
         }
 
+        try Task.checkCancellation()
         let sessionProviderCheck: V011SessionProviderCheck
         do {
             sessionProviderCheck = try await sessionInspector
@@ -87,6 +89,7 @@ struct V011CurrentConnectionVerifier: @unchecked Sendable {
             sessionProviderCheck = .unavailable
         }
 
+        try Task.checkCancellation()
         // SessionCore is asynchronous. Re-inspect only after it has
         // completed so a configuration change during that await cannot be
         // committed as a successful verification receipt.

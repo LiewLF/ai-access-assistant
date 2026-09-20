@@ -26,7 +26,7 @@ struct BeginnerRuntimeReverificationCard: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("将按当前官方设置发送一次最小请求，是否计入额度以实际账户为准。不会切换接入、读取任务内容或修改配置。")
+            Text(BeginnerCurrentConnectionCheckCopy.consent)
         }
         .confirmationDialog("确认验证当前版本的真实任务？",
                             isPresented: $confirmsRealTask) {

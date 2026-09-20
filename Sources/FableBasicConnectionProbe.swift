@@ -5,6 +5,7 @@ import Foundation
 enum FableBasicConnectionProbe {
     static func run(installation: FableCodexInstallation, codexHome: URL,
         commandRunner: any FableCommandRunning, commandTimeout: TimeInterval) throws {
+        try Task.checkCancellation()
         let manager = FileManager.default
         let workspace = manager.temporaryDirectory
             .appendingPathComponent("ai-access-basic-probe-\(UUID().uuidString)")
@@ -21,11 +22,14 @@ enum FableBasicConnectionProbe {
                 timeout: commandTimeout,
                 maximumCapturedBytes: 512 * 1024
             )
+        } catch is CancellationError {
+            throw CancellationError()
         } catch let error as FableLiveAdapterError {
             throw error
         } catch {
             throw FableLiveAdapterError.commandFailed
         }
+        try Task.checkCancellation()
         guard result.terminationStatus == 0, hasCompletedReply(result.standardOutput) else {
             throw FableLiveAdapterError.commandFailed
         }

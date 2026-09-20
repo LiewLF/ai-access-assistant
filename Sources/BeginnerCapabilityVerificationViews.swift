@@ -222,6 +222,7 @@ struct BeginnerCapabilityVerificationView: View {
 
     var body: some View {
         panel(displayTextSize: displayTextSize)
+        .safeAreaInset(edge: .bottom) { BeginnerCurrentConnectionCheckBanner(accessModel: accessModel) }
         .confirmationDialog(
             "确认验证基础能力？",
             isPresented: $confirmsCoreProbe
@@ -234,7 +235,7 @@ struct BeginnerCapabilityVerificationView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text(
-                "当前中转将由助手直接发送一次Responses最小真实请求，最长20秒；不会启动独立Codex CLI、不会启动MCP，也不会占用当前会话。官方轨仍使用Codex验证。可能产生一次API费用；不会修改配置。"
+                BeginnerCurrentConnectionCheckCopy.consent
             )
         }
         .confirmationDialog(
@@ -352,7 +353,7 @@ struct BeginnerCapabilityVerificationView: View {
                             .buttonStyle(.borderedProminent)
                             .disabled(networkProbeDisabled)
                             Text(
-                                "当前中转由助手直接发送1次Responses最小请求，最长20秒，不启动独立CLI、不启动MCP、不占用当前会话；官方轨仍使用Codex验证。可能产生一次API费用，不修改配置。"
+                                BeginnerCurrentConnectionCheckCopy.consent
                             )
                             .font(.caption)
                             .foregroundStyle(.orange)

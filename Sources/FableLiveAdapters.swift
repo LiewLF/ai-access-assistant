@@ -671,7 +671,6 @@ protocol FableCommandRunning {
 
 struct FableSystemCommandRunner: FableCommandRunning {
     private let environment: () -> [String: String]
-
     init(
         environment: @escaping () -> [String: String] = {
             ProcessInfo.processInfo.environment
@@ -679,7 +678,6 @@ struct FableSystemCommandRunner: FableCommandRunning {
     ) {
         self.environment = environment
     }
-
     func run(
         executable: URL,
         arguments: [String],
@@ -690,6 +688,7 @@ struct FableSystemCommandRunner: FableCommandRunning {
         guard environment()["AI_ACCESS_ASSISTANT_TESTING"] != "1" else {
             throw FableLiveAdapterError.testingBlocked
         }
+        try Task.checkCancellation()
         try validateExecutable(executable)
         let process = Process()
         process.executableURL = executable
@@ -698,7 +697,6 @@ struct FableSystemCommandRunner: FableCommandRunning {
             base: environment(),
             overrides: environmentOverrides
         )
-
         let stdout = Pipe()
         let stderr = Pipe()
         if maximumCapturedBytes > 0 {
@@ -708,11 +706,16 @@ struct FableSystemCommandRunner: FableCommandRunning {
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
         }
-
         let group = DispatchGroup()
         let outputLock = NSLock()
         var outputData = Data()
         var errorData = Data()
+        try Task.checkCancellation()
+        do {
+            try process.run()
+        } catch {
+            throw FableLiveAdapterError.commandLaunchFailed
+        }
         if maximumCapturedBytes > 0 {
             group.enter()
             DispatchQueue.global(qos: .utility).async {
@@ -732,14 +735,9 @@ struct FableSystemCommandRunner: FableCommandRunning {
             }
         }
 
-        do {
-            try process.run()
-        } catch {
-            throw FableLiveAdapterError.commandLaunchFailed
-        }
         let deadline = Date().addingTimeInterval(timeout)
         while process.isRunning {
-            guard Date() < deadline else {
+            guard !Task.isCancelled, Date() < deadline else {
                 process.terminate()
                 let terminationDeadline = Date().addingTimeInterval(1)
                 while process.isRunning && Date() < terminationDeadline {
@@ -747,11 +745,13 @@ struct FableSystemCommandRunner: FableCommandRunning {
                 }
                 if process.isRunning { kill(process.processIdentifier, SIGKILL) }
                 process.waitUntilExit()
+                try Task.checkCancellation()
                 throw FableLiveAdapterError.commandTimedOut
             }
             Thread.sleep(forTimeInterval: 0.02)
         }
         process.waitUntilExit()
+        try Task.checkCancellation()
         if maximumCapturedBytes > 0 {
             guard group.wait(timeout: .now() + 2) == .success else {
                 throw FableLiveAdapterError.commandTimedOut

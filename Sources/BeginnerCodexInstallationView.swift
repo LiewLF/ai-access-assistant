@@ -184,7 +184,7 @@ struct BeginnerCodexInstallationView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("会按当前实时 Codex 设置发送一次最小请求，可能产生一次API费用；不会切换模式或修改配置。")
+            Text(BeginnerCurrentConnectionCheckCopy.consent)
         }
     }
 

@@ -237,7 +237,7 @@ struct BeginnerAccessView: View {
             }
         } message: {
             Text(
-                "助手会在隔离临时配置中使用这个已保存中转，完成一次shell工具调用与续答。可能产生一次API费用；不会切换当前接入，不读取真实项目，凭据副本随后删除。"
+                "助手会在隔离临时配置中使用这个已保存中转，完成一次shell工具调用与续答。可能消耗账户额度或产生中转费用；不会切换当前接入，不读取真实项目，凭据副本随后删除。"
             )
         }
         .confirmationDialog(
@@ -252,7 +252,7 @@ struct BeginnerAccessView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text(
-                "将按当前设置发送一次最小请求。中转可能扣费；官方是否计入额度以实际账户为准。不会切换接入或修改配置。"
+                BeginnerCurrentConnectionCheckCopy.consent
             )
         }
         .confirmationDialog(

@@ -30,13 +30,23 @@ struct V011CurrentConnectionService: @unchecked Sendable {
         self.connectionHealthService = connectionHealthService
     }
 
+    @MainActor
     func verify() async throws -> V011CurrentConnectionCheckResult {
+        try await verifyAndCommit { $0 }
+    }
+
+    /// Receipt and dependent evidence share one MainActor turn with cancellation.
+    @MainActor
+    func verifyAndCommit<Result>(
+        _ commit: (V011CurrentConnectionCheckResult) -> Result
+    ) async throws -> Result {
+        try Task.checkCancellation()
         let coordinator = try coordinatorFactory.make(
             runtimeVerifier:
                 dependencies.currentConnectionRuntimeVerifier
         )
         let now = dependencies.now
-        let result = try await Task.detached(
+        let worker = Task.detached(
             priority: .userInitiated
         ) {
             try await coordinator.verifyCurrentConnection(
@@ -61,8 +71,15 @@ struct V011CurrentConnectionService: @unchecked Sendable {
                     )
                 }
             )
-        }.value
+        }
+        let result = try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
+        try Task.checkCancellation()
         try dependencies.beforeConnectionReceiptSave()
+        try Task.checkCancellation()
         try coordinator.validateCurrentConnection(result)
         let endpointHost = V011ConnectionHealthService
             .normalizedEndpointHost(result.endpointHost)
@@ -83,6 +100,7 @@ struct V011CurrentConnectionService: @unchecked Sendable {
         )
         try connectionHealthService.receiptStore.commit(receipt) {
             try dependencies.afterConnectionReceiptSave()
+            try Task.checkCancellation()
             try coordinator.validateCurrentConnection(result)
         }
         let freshness = V011ConnectionHealthService.runtimeFreshness(
@@ -94,12 +112,12 @@ struct V011CurrentConnectionService: @unchecked Sendable {
             live: result.state,
             at: dependencies.now()
         )
-        return V011CurrentConnectionCheckResult(
+        return commit(V011CurrentConnectionCheckResult(
             verification: result,
             receipt: receipt,
             endpointHost: endpointHost,
             runtimeFreshness: freshness,
             receiptMatches: receiptMatches
-        )
+        ))
     }
 }

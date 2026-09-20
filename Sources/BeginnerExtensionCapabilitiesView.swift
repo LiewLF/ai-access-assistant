@@ -207,7 +207,7 @@ struct BeginnerExtensionCapabilitiesView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text(
-                "将按当前实时设置发送一次Responses最小请求。可能产生一次API费用；不会切换接入、启动MCP或修改配置。"
+                BeginnerCurrentConnectionCheckCopy.consent
             )
         }
         .confirmationDialog(

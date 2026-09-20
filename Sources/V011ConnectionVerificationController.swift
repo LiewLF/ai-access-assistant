@@ -37,6 +37,7 @@ final class V011ConnectionVerificationController {
         (any V011ConnectionVerificationControllerDelegate)?
     private let currentConnectionService:
         V011CurrentConnectionActionService
+    private var currentConnectionTask: Task<Void, Never>?
     private let agentLoopService: V011AgentLoopService
 
     init(
@@ -57,28 +58,32 @@ final class V011ConnectionVerificationController {
         guard let delegate else { return }
         guard userConsented else {
             delegate.connectionVerificationDidRejectCurrentCheck(
-                "需要确认联网和可能产生的一次API费用"
+                "需要确认联网及可能产生的额度或费用"
             )
             return
         }
-        guard delegate.canCheckCurrentConnection else { return }
+        guard currentConnectionTask == nil, delegate.canCheckCurrentConnection else { return }
         let startedNanoseconds =
             DispatchTime.now().uptimeNanoseconds
         delegate.connectionVerificationCurrentCheckDidBegin()
         let service = currentConnectionService
-        Task {
-            let outcome = await service.run(
+        currentConnectionTask = Task {
+            _ = await service.run(
                 startedNanoseconds: startedNanoseconds,
                 currentContext: {
                     delegate.connectionVerificationCurrentContext()
+                },
+                completed: { outcome in
+                    currentConnectionTask = nil
+                    delegate.connectionVerificationCurrentCheckDidReceive(outcome)
+                    delegate.connectionVerificationCurrentCheckDidBecomeIdle()
                 }
             )
-            delegate.connectionVerificationCurrentCheckDidReceive(
-                outcome
-            )
-            delegate
-                .connectionVerificationCurrentCheckDidBecomeIdle()
         }
+    }
+
+    func cancelCurrentConnection() {
+        currentConnectionTask?.cancel()
     }
 
     func verifyRealAgentLoop(userConsented: Bool) {

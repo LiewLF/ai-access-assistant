@@ -195,6 +195,7 @@ struct ContentView: View {
             Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
             VStack(spacing: 0) {
                 header
+                BeginnerCurrentConnectionCheckBanner(accessModel: v011AccessModel)
                 AppVaultKeyMigrationBanner(
                     model: vaultMigrationModel
                 )
@@ -243,7 +244,6 @@ struct ContentView: View {
             v012UsageModel.cancelRefresh()
         }
     }
-
     private func requestRefreshForCodexLifecycle(
         _ notification: Notification
     ) {

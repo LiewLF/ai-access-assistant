@@ -125,7 +125,7 @@ struct BeginnerStartView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text(
-                "将按当前设置发送一次最小请求，确认地址、登录凭据和基础响应。中转可能扣费；官方是否计入额度以实际账户为准。不会切换接入、读取任务内容或修改配置。"
+                BeginnerCurrentConnectionCheckCopy.consent
             )
         }
         .confirmationDialog(

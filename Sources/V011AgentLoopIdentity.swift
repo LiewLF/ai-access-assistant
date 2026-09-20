@@ -8,17 +8,20 @@ struct V011AgentLoopRouteIdentity:
     let providerID: String
     let endpointHost: String?
     let endpointPath: String?
+    let endpointScheme: String?
     let modelID: String?
 
     init(
         providerID: String,
         endpointHost: String?,
         endpointPath: String?,
-        modelID: String?
+        modelID: String?,
+        endpointScheme: String? = nil
     ) {
         self.providerID = providerID
         self.endpointHost = endpointHost
         self.endpointPath = endpointPath
+        self.endpointScheme = endpointScheme
         self.modelID = modelID
     }
 
@@ -46,13 +49,28 @@ struct V011AgentLoopRouteIdentity:
                 throw V011AgentLoopVerificationError
                     .unsafeConfiguration
             }
+            if normalized.scheme == "http" {
+                let prefix = ["model_providers", providerID]
+                guard configuration.string(at: prefix + ["wire_api"])?
+                        .lowercased() == "responses",
+                      configuration.boolean(at: prefix + ["requires_openai_auth"]) == true,
+                      !configuration.leaves.keys.contains(where: {
+                          let path = TOMLSemanticEngine.decodePath($0)
+                          return ["experimental_bearer_token", "env_key", "auth"].contains {
+                              path.starts(with: prefix + [$0])
+                          }
+                      }) else {
+                    throw V011AgentLoopVerificationError.unsafeConfiguration
+                }
+            }
             endpoint = normalized
         }
         self.init(
             providerID: providerID,
             endpointHost: endpoint?.host,
             endpointPath: endpoint?.path,
-            modelID: modelID?.isEmpty == false ? modelID : nil
+            modelID: modelID?.isEmpty == false ? modelID : nil,
+            endpointScheme: endpoint?.scheme
         )
         guard isStructurallyValid else {
             throw V011AgentLoopVerificationError.unsafeConfiguration
@@ -71,13 +89,22 @@ struct V011AgentLoopRouteIdentity:
             guard let normalized = Self.endpoint(
                 live.provider?.baseURL
             ) else { return nil }
+            if normalized.scheme == "http" {
+                guard let provider = live.provider,
+                      provider.providerID == providerID,
+                      provider.wireAPI?.lowercased() == "responses",
+                      provider.requiresOpenAIAuth == true,
+                      !provider.hasBearerToken, !provider.hasEnvKey,
+                      !provider.hasCommandAuth else { return nil }
+            }
             endpoint = normalized
         }
         self.init(
             providerID: providerID,
             endpointHost: endpoint?.host,
             endpointPath: endpoint?.path,
-            modelID: live.model
+            modelID: live.model,
+            endpointScheme: endpoint?.scheme
         )
         guard isStructurallyValid else { return nil }
     }
@@ -85,18 +112,20 @@ struct V011AgentLoopRouteIdentity:
     init?(profile: CodexRelayProfile) {
         guard let endpoint = Self.endpoint(
             profile.baseURL
-        ) else { return nil }
+        ), endpoint.scheme == "https" else { return nil }
         self.init(
             providerID: profile.v011ProviderID,
             endpointHost: endpoint.host,
             endpointPath: endpoint.path,
-            modelID: profile.defaultModel
+            modelID: profile.defaultModel,
+            endpointScheme: endpoint.scheme
         )
         guard isStructurallyValid else { return nil }
     }
 
     var isStructurallyValid: Bool {
         Self.safeIdentifier(providerID, maximum: 256)
+            && schemeIsValid
             && endpointHost.map(Self.safeHost) != false
             && endpointPath.map(Self.safePath) != false
             && modelID.map {
@@ -107,7 +136,32 @@ struct V011AgentLoopRouteIdentity:
                 : endpointHost != nil && endpointPath != nil)
     }
 
+    // Receipts written before loopback HTTP support omitted the scheme;
+    // those identities can only represent HTTPS, never an HTTP gateway.
+    private var effectiveScheme: String? {
+        endpointHost == nil ? nil : endpointScheme ?? "https"
+    }
+
+    private var schemeIsValid: Bool {
+        if providerID == "openai" { return endpointScheme == nil }
+        if effectiveScheme == "https" { return true }
+        guard effectiveScheme == "http", let endpointHost,
+              let endpointPath else { return false }
+        return V011RelayEndpointPolicy.isLoopbackGatewayAddress(
+            "http://\(endpointHost)\(endpointPath)"
+        )
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.providerID == rhs.providerID
+            && lhs.endpointHost == rhs.endpointHost
+            && lhs.endpointPath == rhs.endpointPath
+            && lhs.modelID == rhs.modelID
+            && lhs.effectiveScheme == rhs.effectiveScheme
+    }
+
     private struct Endpoint {
+        let scheme: String
         let host: String
         let path: String
     }
@@ -115,7 +169,9 @@ struct V011AgentLoopRouteIdentity:
     private static func endpoint(_ baseURL: String?) -> Endpoint? {
         guard let baseURL,
               let components = URLComponents(string: baseURL),
-              components.scheme?.lowercased() == "https",
+              let scheme = components.scheme?.lowercased(),
+              (scheme == "https"
+                || V011RelayEndpointPolicy.isLoopbackGatewayAddress(baseURL)),
               components.user == nil,
               components.password == nil,
               components.query == nil,
@@ -130,7 +186,7 @@ struct V011AgentLoopRouteIdentity:
         let path = components.percentEncodedPath.isEmpty
             ? "/" : components.percentEncodedPath
         guard safePath(path) else { return nil }
-        return Endpoint(host: authority, path: path)
+        return Endpoint(scheme: scheme, host: authority, path: path)
     }
 
     private static func safeIdentifier(

@@ -182,6 +182,8 @@ final class V011AccessModel:
     @Published private(set) var agentLoopCompletedUsage: V012CompletedTurnUsage?
     @Published private(set) var isAgentLoopVerified = false
     @Published private(set) var agentLoopErrorMessage: String?
+    private var agentLoopFailureState = V011AgentLoopFailureState()
+    private var wasCurrentConnectionVerifiedBeforeCheck = false
     @Published private(set) var officialUsageSnapshot: V011OfficialUsageSnapshot?
     @Published private(set) var isRefreshingOfficialUsage = false
     @Published private(set) var officialUsageErrorMessage: String?
@@ -365,14 +367,8 @@ final class V011AccessModel:
         )
     }
 
-    var agentLoopFailurePresentation:
-        V013FailurePresentation? {
-        guard let agentLoopReceipt,
-              agentLoopReceiptTargetsCurrentState(agentLoopReceipt),
-              let stage = agentLoopReceipt.failureStage else {
-            return nil
-        }
-        return V013FailurePresentation.agentLoop(stage, reason: agentLoopReceipt.failureReason)
+    var agentLoopFailurePresentation: V013FailurePresentation? {
+        connectionPresentation.agentLoopFailurePresentation
     }
 
     var officialUsageFreshnessText: String? {
@@ -861,8 +857,9 @@ final class V011AccessModel:
         applyRecoveryContext(recovery)
         currentConnectionReceipt = result.connectionReceipt
         agentLoopReceipt = result.agentLoopReceipt
-        isAgentLoopVerified = result.agentLoopMatches
-        agentLoopErrorMessage = presentation.agentLoopErrorMessage
+        agentLoopErrorMessage = agentLoopFailureState.refresh(live: result.live)
+            ?? presentation.agentLoopErrorMessage
+        isAgentLoopVerified = result.agentLoopMatches && agentLoopErrorMessage == nil
         savedRelayReadinessReceipts =
             result.savedRelayReadinessReceipts
         savedRelayReadinessMatches = result.savedRelayReadinessMatches
@@ -900,14 +897,13 @@ final class V011AccessModel:
     }
 
     func detectCurrentConnection(userConsented: Bool) {
-        connectionVerificationController.detectCurrentConnection(
-            userConsented: userConsented
-        )
+        connectionVerificationController.detectCurrentConnection(userConsented: userConsented)
+    }
+    func cancelCurrentConnection() {
+        connectionVerificationController.cancelCurrentConnection()
     }
 
-    var connectionVerificationLiveState: LiveCodexState? {
-        liveState
-    }
+    var connectionVerificationLiveState: LiveCodexState? { liveState }
 
     func connectionVerificationCurrentContext()
         -> V011CurrentConnectionActionContext {
@@ -920,13 +916,12 @@ final class V011AccessModel:
         )
     }
 
-    func connectionVerificationDidRejectCurrentCheck(
-        _ message: String
-    ) {
+    func connectionVerificationDidRejectCurrentCheck(_ message: String) {
         currentConnectionCheckError = message
     }
 
     func connectionVerificationCurrentCheckDidBegin() {
+        wasCurrentConnectionVerifiedBeforeCheck = isCurrentConnectionVerified
         isCheckingCurrentConnection = true
         isCurrentConnectionVerified = false
         currentConnectionCheckError = nil
@@ -936,10 +931,18 @@ final class V011AccessModel:
         currentSessionProviderCheck = nil
     }
 
-    func connectionVerificationCurrentCheckDidReceive(
-        _ outcome: V011CurrentConnectionActionOutcome
-    ) {
+    func connectionVerificationCurrentCheckDidReceive(_ outcome: V011CurrentConnectionActionOutcome) {
         switch outcome {
+        case .cancelled:
+            isCurrentConnectionVerified = currentConnectionReceipt.map { receipt in
+                guard wasCurrentConnectionVerifiedBeforeCheck, let live = liveState,
+                      let data = try? Data(contentsOf: live.configURL),
+                      TOMLSemanticEngine.sha256(data) == live.configHash else { return false }
+                return V011ConnectionHealthService.receiptMatches(receipt, live: live, at: dependencies.now())
+            } ?? false
+            verifiedEndpointHost = isCurrentConnectionVerified ? currentConnectionReceipt?.endpointHost : nil
+            currentSessionProviderCheck = isCurrentConnectionVerified ? currentConnectionReceipt?.sessionProviderCheck : nil
+            status = "基础连接检测已取消；已发送请求的用量以账户记录为准。"
         case let .verified(check, status, capability, history):
             let result = check.verification
             applyCurrentConnectionCapabilityUpdate(capability)
@@ -980,18 +983,15 @@ final class V011AccessModel:
     }
 
     func verifyRealAgentLoop(userConsented: Bool) {
-        connectionVerificationController.verifyRealAgentLoop(
-            userConsented: userConsented
-        )
+        connectionVerificationController.verifyRealAgentLoop(userConsented: userConsented)
     }
 
-    func connectionVerificationDidRejectAgentLoop(
-        _ message: String
-    ) {
+    func connectionVerificationDidRejectAgentLoop(_ message: String) {
         agentLoopErrorMessage = message
     }
 
     func connectionVerificationAgentLoopDidBegin() {
+        agentLoopFailureState.begin(live: liveState)
         isVerifyingAgentLoop = true
         isAgentLoopVerified = false
         agentLoopCompletedUsage = nil
@@ -1010,10 +1010,9 @@ final class V011AccessModel:
         status = result.matchesCurrent ? "真实任务闭环已通过" : "真实任务证据与当前状态不匹配"
     }
 
-    func connectionVerificationAgentLoopDidFail(
-        _ message: String
-    ) {
+    func connectionVerificationAgentLoopDidFail(_ message: String) {
         isAgentLoopVerified = false
+        agentLoopFailureState.fail(message)
         agentLoopErrorMessage = message
         status = "真实任务验证未完成；当前配置未修改"
     }
@@ -1438,6 +1437,7 @@ final class V011AccessModel:
             recoveryProtectsNewSessions = true
         }
         if start.resetsAgentLoop {
+            agentLoopFailureState.clear()
             isAgentLoopVerified = false
             agentLoopErrorMessage = nil
         }
@@ -1632,9 +1632,8 @@ final class V011AccessModel:
             isAgentLoopVerified: isAgentLoopVerified,
             agentLoopReceipt: agentLoopReceipt,
             agentLoopReceiptTargetsCurrentState:
-                agentLoopReceipt.map {
-                    agentLoopReceiptTargetsCurrentState($0)
-                } ?? false,
+                agentLoopReceipt.map(agentLoopReceiptTargetsCurrentState) ?? false,
+            agentLoopTransientError: agentLoopFailureState.currentMessage(live: liveState),
             currentConnectionCheckError:
                 currentConnectionCheckError,
             isCurrentConnectionVerified:
@@ -1710,6 +1709,7 @@ final class V011AccessModel:
         _ result: V011AgentLoopProbeResult,
         matchesCurrent: Bool
     ) {
+        agentLoopFailureState.clear()
         agentLoopReceipt = result.receipt
         isAgentLoopVerified =
             matchesCurrent

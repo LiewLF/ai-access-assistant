@@ -16,6 +16,7 @@ struct V011AccessConnectionPresentation: @unchecked Sendable {
     let isAgentLoopVerified: Bool
     let agentLoopReceipt: V011AgentLoopReceipt?
     let agentLoopReceiptTargetsCurrentState: Bool
+    let agentLoopTransientError: String?
     let currentConnectionCheckError: String?
     let isCurrentConnectionVerified: Bool
     let currentConnectionReceipt: V011ConnectionReceipt?
@@ -217,16 +218,22 @@ struct V011AccessConnectionPresentation: @unchecked Sendable {
         if isAgentLoopVerified {
             return "真实任务闭环已通过"
         }
-        if let agentLoopReceipt,
-           agentLoopReceiptTargetsCurrentState,
-           let stage = agentLoopReceipt.failureStage {
-            let failure = V013FailurePresentation.agentLoop(stage, reason: agentLoopReceipt.failureReason)
+        if let failure = agentLoopFailurePresentation {
             return "\(failure.conclusion)：\(failure.explanation) 下一步：\(failure.primaryAction.title)。"
         }
         if hasFreshConnectionReceipt {
             return "基础连接已通过；真实任务闭环尚未验证"
         }
         return "先通过基础连接检测，再验证真实任务闭环"
+    }
+
+    var agentLoopFailurePresentation: V013FailurePresentation? {
+        if let agentLoopTransientError {
+            return V011AgentLoopFailureState.presentation(agentLoopTransientError)
+        }
+        guard let agentLoopReceipt, agentLoopReceiptTargetsCurrentState,
+              let stage = agentLoopReceipt.failureStage else { return nil }
+        return V013FailurePresentation.agentLoop(stage, reason: agentLoopReceipt.failureReason)
     }
 
     var currentConnectionVerificationSummary: String {

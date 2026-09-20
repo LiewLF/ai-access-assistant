@@ -19,6 +19,7 @@ struct V011CurrentConnectionHistoryUpdate: @unchecked Sendable {
 }
 
 enum V011CurrentConnectionActionOutcome: @unchecked Sendable {
+    case cancelled
     case verified(
         check: V011CurrentConnectionCheckResult,
         status: String,
@@ -47,44 +48,54 @@ struct V011CurrentConnectionActionService: @unchecked Sendable {
         self.dependencies = dependencies
     }
 
+    @MainActor
     func run(
         startedNanoseconds: UInt64,
         currentContext: @escaping @MainActor @Sendable
-            () -> V011CurrentConnectionActionContext
+            () -> V011CurrentConnectionActionContext,
+        completed: @MainActor (V011CurrentConnectionActionOutcome) -> Void = { _ in }
     ) async -> V011CurrentConnectionActionOutcome {
+        func finish(_ outcome: V011CurrentConnectionActionOutcome)
+            -> V011CurrentConnectionActionOutcome {
+            completed(outcome)
+            return outcome
+        }
         do {
-            let check = try await verificationService.verify()
-            let context = await currentContext()
-            let result = check.verification
-            let capability = persistCoreReceipts(
-                for: result,
-                managedState: context.managedState
-            )
-            let status = Self.status(
-                check: check,
-                managedState: context.managedState,
-                hasPendingRecovery: context.hasPendingRecovery,
-                recoveryDisposition: context.recoveryDisposition
-            )
-            let history = recordObservation(
-                startedNanoseconds: startedNanoseconds,
-                providerID: result.providerID,
-                configHash: result.configHash,
-                outcome: check.isVerified ? .passed : .degraded,
-                failureCode: check.isVerified
-                    ? nil
-                    : .receiptMismatch,
-                sessionProviderCheck: result.sessionProviderCheck,
-                runtimeFreshness: check.runtimeFreshness
-            )
-            return .verified(
-                check: check,
-                status: status,
-                capability: capability,
-                history: history
-            )
+            try Task.checkCancellation()
+            return try await verificationService.verifyAndCommit { check in
+                let context = currentContext()
+                let result = check.verification
+                let capability = persistCoreReceipts(
+                    for: result,
+                    managedState: context.managedState
+                )
+                let status = Self.status(
+                    check: check,
+                    managedState: context.managedState,
+                    hasPendingRecovery: context.hasPendingRecovery,
+                    recoveryDisposition: context.recoveryDisposition
+                )
+                let history = recordObservation(
+                    startedNanoseconds: startedNanoseconds,
+                    providerID: result.providerID,
+                    configHash: result.configHash,
+                    outcome: check.isVerified ? .passed : .degraded,
+                    failureCode: check.isVerified
+                        ? nil
+                        : .receiptMismatch,
+                    sessionProviderCheck: result.sessionProviderCheck,
+                    runtimeFreshness: check.runtimeFreshness
+                )
+                return finish(.verified(
+                    check: check,
+                    status: status,
+                    capability: capability,
+                    history: history
+                ))
+            }
         } catch let failure as V011CurrentConnectionProbeFailure {
-            let context = await currentContext()
+            guard !Task.isCancelled else { return finish(.cancelled) }
+            let context = currentContext()
             let freshness = V011ConnectionHealthService
                 .runtimeFreshness(
                     live: failure.state,
@@ -94,7 +105,7 @@ struct V011CurrentConnectionActionService: @unchecked Sendable {
             let status = context.hasPendingRecovery
                 ? "最小请求失败；已重新读取当前配置，且上次操作仍未完成"
                 : "最小请求失败；已重新读取当前配置"
-            return .probeFailed(
+            return finish(.probeFailed(
                 failure: failure,
                 runtimeFreshness: freshness,
                 status: status,
@@ -110,10 +121,11 @@ struct V011CurrentConnectionActionService: @unchecked Sendable {
                         failure.sessionProviderCheck,
                     runtimeFreshness: freshness
                 )
-            )
+            ))
         } catch {
-            let context = await currentContext()
-            return .failed(
+            guard !Task.isCancelled else { return finish(.cancelled) }
+            let context = currentContext()
+            return finish(.failed(
                 safeError: V011RecoveryErrorText.safeDetail(error),
                 history: recordObservation(
                     startedNanoseconds: startedNanoseconds,
@@ -127,7 +139,7 @@ struct V011CurrentConnectionActionService: @unchecked Sendable {
                     sessionProviderCheck: nil,
                     runtimeFreshness: .unknown
                 )
-            )
+            ))
         }
     }
 

@@ -164,7 +164,7 @@ struct BeginnerDiagnosticsView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text(
-                "将按当前实时设置发送一次最小请求。可能产生一次API费用；不会切换接入、读取任务内容或修改配置。"
+                BeginnerCurrentConnectionCheckCopy.consent
             )
         }
         .confirmationDialog(
@@ -179,7 +179,7 @@ struct BeginnerDiagnosticsView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text(
-                "将调用Codex内置CLI，在临时HOME、CODEX_HOME和空白工作区完成一次shell工具调用与续答。可能产生一次API费用；不读取真实项目或历史会话，临时认证副本随后删除。"
+                "将调用Codex内置CLI，在临时HOME、CODEX_HOME和空白工作区完成一次shell工具调用与续答。可能消耗账户额度或产生中转费用；不读取真实项目或历史会话，临时认证副本随后删除。"
             )
         }
         .sheet(item: $selectedRepairPreview) { preview in

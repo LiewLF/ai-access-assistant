@@ -471,3 +471,7 @@ Tests/Build228UnreadableUsageLedgerTests.swift	test-v011-access-model.sh
 Tests/Build229UnreadablePricingTests.swift	test-v011-access-model.sh
 Tests/Build231ConnectionFeedbackTests.swift	test-v011-access-model.sh
 Tests/Build231GatewayRouteTests.swift	test-v011-access-model.sh
+Sources/BeginnerCurrentConnectionCheckView.swift	build.sh
+Tests/Build232ConnectionCancellationTests.swift	test-v011-access-model.sh
+Sources/V011AgentLoopFailureState.swift	build.sh,test-build63-accessibility.sh,test-build63-audit.sh,test-build63-performance.sh,test-build63-snapshot-import.sh,test-v011-access-model.sh,test-v011-build63-receipt-retention.sh,test-v011-control-plane.sh,test.sh,test-governance.sh,test-v011-history-model.sh,test-transactions.sh,test-build65-history-optimization.sh,test-build65-history-recovery.sh,test-build65-warning-ux.sh,test-migrations.sh,test-session-sync.sh
+Tests/Build232RealTaskGatewayTests.swift	test-v011-access-model.sh
