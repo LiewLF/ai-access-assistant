@@ -60,6 +60,7 @@ struct BeginnerRelayDraftView: View {
             .frame(maxWidth: .infinity)
         }
         .onDisappear {
+            model.cancelDocumentRefresh()
             model.cancelModelFetch()
             accessModel.cancelAddingRelay()
         }
@@ -118,6 +119,10 @@ struct BeginnerRelayDraftView: View {
                                         .whitespacesAndNewlines
                                 ).isEmpty
                     )
+                    if model.isRefreshingDocument {
+                        Button("取消读取文档") { model.cancelDocumentRefresh() }
+                            .accessibilityIdentifier("relay.cancel-document-read")
+                    }
                 }
                 TextEditor(
                     text:

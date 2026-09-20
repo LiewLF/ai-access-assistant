@@ -80,7 +80,9 @@ final class ConfigWorkspaceModel:
     @Published var confirmsLocalGateway = false {
         didSet { if oldValue != confirmsLocalGateway { sourceAcquisitionController.modelInputsDidChange() } }
     }
-    @Published var documentURL = ""
+    @Published var documentURL = "" {
+        didSet { if oldValue != documentURL { sourceAcquisitionController.documentURLDidChange() } }
+    }
     @Published var documentTitle = ""
     @Published var documentText = ""
     @Published var documentStatus = "尚未联网整理"
@@ -206,7 +208,7 @@ final class ConfigWorkspaceModel:
         )
     private lazy var sourceAcquisitionController =
         ConfigWorkspaceSourceAcquisitionController(
-            delegate: self
+            delegate: self, fetchDocument: dependencies.documentFetchOperation
         )
 
     init(
@@ -635,6 +637,7 @@ final class ConfigWorkspaceModel:
     }
 
     func selectRelay(_ relayID: String) {
+        cancelDocumentRefresh()
         selectedRelayID = relayID
         importedProviderID = nil
         importedDirectoryEntryID = nil
@@ -1959,13 +1962,10 @@ final class ConfigWorkspaceModel:
     }
 
     func refreshDocument() {
-        isRefreshingDocument = true
-        documentStatus = "正在读取并整理全文"
-        errorMessage = nil
-        sourceAcquisitionController.acquireDocument(
-            urlString: documentURL
-        )
+        sourceAcquisitionController.acquireDocument(urlString: documentURL)
     }
+
+    func cancelDocumentRefresh() { sourceAcquisitionController.cancelDocument() }
 
     func applyExtractedConfiguration() {
         if let value = extracted.providerName { providerName = value }

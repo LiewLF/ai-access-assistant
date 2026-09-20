@@ -1,6 +1,6 @@
 # 对应源码说明
 
-本仓库公开 AI接入助手 `0.12.0 (233)` 的 source-only 连续源码快照（非 tag、非 Release）。内置 `SessionCore` 版本为 `0.11.0`，整体许可证为 `AGPL-3.0-only`。
+本仓库公开 AI接入助手 `0.12.0 (234)` 的 source-only 连续源码快照（非 tag、非 Release）。内置 `SessionCore` 版本为 `0.11.0`，整体许可证为 `AGPL-3.0-only`。
 
 ## 本次公开内容
 

@@ -7,6 +7,9 @@ struct ConfigWorkspaceDependencies {
     let controlRootURL: URL?
     let vaultKeyProvider: () throws -> Data
     let loadsControlStateOnInit: Bool
+    var documentFetchOperation: (String) async throws -> RefreshedDocument = {
+        try await DocumentRefreshService.fetch(urlString: $0)
+    }
     let sessionPreviewOperation:
         (
             SessionSyncEngine,

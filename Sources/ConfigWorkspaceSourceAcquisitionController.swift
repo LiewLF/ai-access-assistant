@@ -31,6 +31,7 @@ enum ConfigWorkspaceModelDirectoryState: Equatable {
 @MainActor
 protocol ConfigWorkspaceSourceAcquisitionControllerDelegate:
     AnyObject {
+    var documentURL: String { get }
     var documentTitle: String { get set }
     var documentText: String { get set }
     var documentStatus: String { get set }
@@ -80,6 +81,9 @@ final class ConfigWorkspaceSourceAcquisitionController {
     private weak var delegate:
         (any ConfigWorkspaceSourceAcquisitionControllerDelegate)?
     private let fetchModels: ModelFetcher
+    private let fetchDocument: (String) async throws -> RefreshedDocument
+    private var documentTask: Task<Void, Never>?
+    private var documentRequestID: UUID?
     private var modelsTask: Task<Void, Never>?
     private var modelsRequestID: UUID?
     private var directoryState = ConfigWorkspaceModelDirectoryState.notRead
@@ -87,29 +91,62 @@ final class ConfigWorkspaceSourceAcquisitionController {
     init(
         delegate:
             any ConfigWorkspaceSourceAcquisitionControllerDelegate,
+        fetchDocument: @escaping (String) async throws -> RefreshedDocument = {
+            try await DocumentRefreshService.fetch(urlString: $0)
+        },
         fetchModels: @escaping ModelFetcher = { baseURL, apiKey, wireProtocol, confirmed in
             try await ModelCatalogService.fetch(baseURL: baseURL, apiKey: apiKey,
                 wireProtocol: wireProtocol, confirmedLocalGateway: confirmed)
         }
     ) {
         self.delegate = delegate
+        self.fetchDocument = fetchDocument
         self.fetchModels = fetchModels
     }
 
     func acquireDocument(urlString: String) {
-        Task { [weak self] in
+        guard let delegate, documentRequestID == nil else { return }
+        let requestID = UUID()
+        documentRequestID = requestID
+        delegate.isRefreshingDocument = true
+        delegate.documentStatus = "正在读取并整理全文"
+        delegate.errorMessage = nil
+        let fetch = fetchDocument
+        documentTask = Task { [weak self] in
+            guard !Task.isCancelled else { return }
             let outcome: ConfigWorkspaceDocumentAcquisitionOutcome
             do {
                 outcome = .success(
-                    try await DocumentRefreshService.fetch(
-                        urlString: urlString
-                    )
+                    try await fetch(urlString)
                 )
             } catch {
                 outcome = .failure(error.localizedDescription)
             }
-            self?.applyDocument(outcome)
+            guard let self, self.documentRequestID == requestID,
+                  !Task.isCancelled, let delegate = self.delegate else { return }
+            guard delegate.documentURL == urlString else {
+                self.documentURLDidChange()
+                return
+            }
+            self.documentRequestID = nil
+            self.documentTask = nil
+            self.applyDocument(outcome)
         }
+    }
+
+    func cancelDocument() {
+        guard documentRequestID != nil else { return }
+        documentRequestID = nil
+        documentTask?.cancel()
+        documentTask = nil
+        delegate?.isRefreshingDocument = false
+        delegate?.documentStatus = "已取消读取文档；草稿和已有资料保留，可手动重试。"
+    }
+
+    func documentURLDidChange() {
+        guard documentRequestID != nil else { return }
+        cancelDocument()
+        delegate?.documentStatus = "文档网址已变化；已停止本次读取，草稿和已有资料保留。"
     }
 
     func acquireModels() {
