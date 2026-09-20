@@ -30,6 +30,7 @@ enum V011DeterministicRepairActionOutcome: @unchecked Sendable {
     case failed(
         verification: V011AgentLoopProbeResult?,
         state: V011AccessStateSnapshot?,
+        verificationScope: V011AgentLoopFailureState.Scope?,
         status: String,
         errorMessage: String
     )
@@ -145,12 +146,13 @@ struct V011RecoveryActionService: @unchecked Sendable {
                 errorMessage: V014RecoveryRepairError
                     .previewChanged.localizedDescription
             )
-        case let .failed(verification, state, safeError):
+        case let .failed(verification, state, verificationScope, safeError):
             return .failed(
                 verification: verification,
                 state: state,
+                verificationScope: verificationScope,
                 status:
-                    "安全修复未完成；已停止并保留恢复记录",
+                    "安全修复未完成验证；请查看失败原因",
                 errorMessage:
                     verification?.safeMessage ?? safeError
             )

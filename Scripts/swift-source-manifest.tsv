@@ -448,6 +448,7 @@ Tests/Build212RelayAdditionTests.swift	test-v011-access-model.sh
 Tests/Build213RelayEditorTests.swift	test-v011-access-model.sh
 Tests/Build214ModelDiscoveryTests.swift	test-v011-access-model.sh
 Tests/Build234DocumentAcquisitionTests.swift	test-v011-access-model.sh
+Tests/Build235RecoveryFeedbackTests.swift	test-v011-access-model.sh
 Tests/LTP130ManualModelAccessTests.swift	test-v011-access-model.sh
 Tests/LTP130ProbeScheduleTests.swift	test-v011-access-model.sh
 Tests/LTP140BoundedVerificationTests.swift	test-v011-access-model.sh

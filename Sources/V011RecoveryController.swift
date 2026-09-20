@@ -10,6 +10,7 @@ struct V011RecoveryActionStart: Sendable {
 protocol V011RecoveryControllerDelegate: AnyObject {
     var allowsRecoveryActionStart: Bool { get }
     var hasPendingRecovery: Bool { get }
+    var errorMessage: String? { get }
     var recoveryDisposition: V011RecoveryDisposition { get }
     var recoveryControllerUsesOfficialAccess: Bool { get }
     var canRunDeterministicRepair: Bool { get }
@@ -21,6 +22,9 @@ protocol V011RecoveryControllerDelegate: AnyObject {
     func recoveryActionDidReject(
         status: String?,
         errorMessage: String
+    )
+    func recoveryActionDidFinishFailedRepair(
+        status: String, errorMessage: String, scope: V011AgentLoopFailureState.Scope?
     )
     func recoveryActionDidProgress(_ message: String)
     func recoveryActionDidBegin(_ start: V011RecoveryActionStart)
@@ -40,7 +44,7 @@ protocol V011RecoveryControllerDelegate: AnyObject {
         _ outcome: V011AcceptCurrentRelayRecoveryActionOutcome
     )
     func recoveryActionDidBecomeIdle()
-    func recoveryActionRequestsRefresh()
+    func recoveryActionRequestsRefresh(completion: (() -> Void)?)
 }
 
 /// Owns recovery eligibility, task launch, progress, completion ordering, and
@@ -127,7 +131,7 @@ final class V011RecoveryController {
             let outcome = await service.recoverPending()
             delegate.recoveryActionDidReceivePending(outcome)
             delegate.recoveryActionDidBecomeIdle()
-            delegate.recoveryActionRequestsRefresh()
+            delegate.recoveryActionRequestsRefresh(completion: nil)
         }
     }
 
@@ -166,8 +170,22 @@ final class V011RecoveryController {
             delegate
                 .recoveryActionDidReceiveDeterministicRepair(outcome)
             delegate.recoveryActionDidBecomeIdle()
-            if case .previewChanged = outcome { return }
-            delegate.recoveryActionRequestsRefresh()
+            switch outcome {
+            case .previewChanged:
+                return
+            case .completed:
+                delegate.recoveryActionRequestsRefresh(completion: nil)
+            case let .failed(_, _, verificationScope, status, errorMessage):
+                delegate.recoveryActionRequestsRefresh { [weak delegate] in
+                    guard let delegate, !delegate.hasPendingRecovery,
+                          delegate.errorMessage == nil else { return }
+                    // Keep freshly read state; a successful read cannot erase
+                    // the failure of this repair attempt.
+                    delegate.recoveryActionDidFinishFailedRepair(
+                        status: status, errorMessage: errorMessage, scope: verificationScope
+                    )
+                }
+            }
         }
     }
 
@@ -187,7 +205,7 @@ final class V011RecoveryController {
             delegate.recoveryActionDidReceiveKeepCurrent(outcome)
             delegate.recoveryActionDidBecomeIdle()
             if case .success = outcome {
-                delegate.recoveryActionRequestsRefresh()
+                delegate.recoveryActionRequestsRefresh(completion: nil)
             }
         }
     }
@@ -214,7 +232,7 @@ final class V011RecoveryController {
             delegate
                 .recoveryActionDidReceiveAcceptCurrentRelay(outcome)
             delegate.recoveryActionDidBecomeIdle()
-            delegate.recoveryActionRequestsRefresh()
+            delegate.recoveryActionRequestsRefresh(completion: nil)
         }
     }
 

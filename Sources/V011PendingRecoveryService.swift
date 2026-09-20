@@ -10,6 +10,7 @@ enum V011DeterministicRepairOutcome: @unchecked Sendable {
     case failed(
         verification: V011AgentLoopProbeResult?,
         state: V011AccessStateSnapshot?,
+        verificationScope: V011AgentLoopFailureState.Scope?,
         safeError: String
     )
 }
@@ -54,7 +55,7 @@ struct V011PendingRecoveryService: @unchecked Sendable {
     func runDeterministicRepair(
         expectedPreviewFingerprint: String
     ) async -> V011DeterministicRepairOutcome {
-        let verifier = dependencies.agentLoopVerifier
+        let verifier = V011RecoveryScopedVerifier(dependencies: dependencies)
         let receiptStore = V011AgentLoopService(
             dependencies: dependencies
         ).receiptStore
@@ -74,11 +75,11 @@ struct V011PendingRecoveryService: @unchecked Sendable {
                     == expectedPreviewFingerprint else {
                 return .previewChanged(freshContext)
             }
+            let adoptionCount = try adoptionCoordinator.recoverPending()
+            let deletionCount = try deletionCoordinator.recoverPending()
             let coordinator = try coordinatorFactory.make(
                 runtimeVerifier: repairVerifier
             )
-            let adoptionCount = try adoptionCoordinator.recoverPending()
-            let deletionCount = try deletionCoordinator.recoverPending()
             let switchCount = try await coordinator.recoverPending()
             if recorder.result == nil {
                 let result = try verifier.verify(
@@ -117,6 +118,7 @@ struct V011PendingRecoveryService: @unchecked Sendable {
             return .failed(
                 verification: recorder.result,
                 state: refreshedState,
+                verificationScope: verifier.scope,
                 safeError: V011RecoveryErrorText.safeDetail(error)
             )
         }
@@ -151,5 +153,35 @@ struct V011PendingRecoveryService: @unchecked Sendable {
                 .appendingPathComponent("V011", isDirectory: true)
                 .appendingPathComponent("state.json")
         )
+    }
+}
+
+/// Observe each actual verification boundary, including verification performed
+/// inside switch recovery. The operation's starting route can be different.
+private final class V011RecoveryScopedVerifier: V011AgentLoopVerifying, @unchecked Sendable {
+    private let dependencies: V011AccessDependencies
+    private let lock = NSLock()
+    private var storedScope: V011AgentLoopFailureState.Scope?
+
+    init(dependencies: V011AccessDependencies) { self.dependencies = dependencies }
+
+    var scope: V011AgentLoopFailureState.Scope? {
+        lock.withLock { storedScope }
+    }
+
+    func verify(userConsented: Bool,
+                expectedRouteIdentity: V011AgentLoopRouteIdentity?) throws -> V011AgentLoopProbeResult {
+        lock.withLock { storedScope = nil }
+        guard userConsented else { throw V011AgentLoopVerificationError.authorizationRequired }
+        let live = try V011AccessStateReader.readState(dependencies: dependencies, pending: false).live
+        lock.withLock { storedScope = .init(live) }
+        return try dependencies.agentLoopVerifier.verify(
+            userConsented: userConsented,
+            expectedRouteIdentity: expectedRouteIdentity ?? V011AgentLoopRouteIdentity(live: live)
+        )
+    }
+
+    func receiptMatchesCurrent(_ receipt: V011AgentLoopReceipt, live: LiveCodexState, now: Date) -> Bool {
+        dependencies.agentLoopVerifier.receiptMatchesCurrent(receipt, live: live, now: now)
     }
 }

@@ -1417,12 +1417,18 @@ final class V011AccessModel:
         return false
     }
 
-    func recoveryActionDidReject(
-        status: String?,
-        errorMessage: String
-    ) {
+    func recoveryActionDidReject(status: String?, errorMessage: String) {
         if let status { self.status = status }
         self.errorMessage = errorMessage
+    }
+
+    func recoveryActionDidFinishFailedRepair(
+        status: String, errorMessage: String, scope: V011AgentLoopFailureState.Scope?
+    ) {
+        guard let liveState, let scope, scope == .init(liveState) else { return }
+        agentLoopFailureState.begin(live: liveState)
+        connectionVerificationAgentLoopDidFail(errorMessage)
+        recoveryActionDidReject(status: status, errorMessage: errorMessage)
     }
 
     func recoveryActionDidProgress(_ message: String) {
@@ -1458,9 +1464,7 @@ final class V011AccessModel:
         }
     }
 
-    func recoveryActionDidReceivePending(
-        _ outcome: V011PendingRecoveryActionOutcome
-    ) {
+    func recoveryActionDidReceivePending(_ outcome: V011PendingRecoveryActionOutcome) {
         switch outcome {
         case let .success(_, status):
             self.status = status
@@ -1481,10 +1485,7 @@ final class V011AccessModel:
         case let .completed(_, result, refreshed, status):
             liveState = refreshed.live
             managedState = refreshed.managed
-            applyAgentLoopResult(
-                result,
-                matchesCurrent: refreshed.agentLoopMatches
-            )
+            applyAgentLoopResult(result, matchesCurrent: refreshed.agentLoopMatches)
             self.status = status
             errorMessage = nil
             recoveryFailureStageText = nil
@@ -1495,9 +1496,8 @@ final class V011AccessModel:
             hasPendingRecovery = context.pending
             recoveryDisposition = context.disposition
             recoveryRepairPreview = context.preview
-            self.errorMessage = errorMessage
-            self.status = status
-        case let .failed(result, refreshed, status, errorMessage):
+            recoveryActionDidReject(status: status, errorMessage: errorMessage)
+        case let .failed(result, refreshed, _, status, errorMessage):
             if let refreshed {
                 liveState = refreshed.live
                 managedState = refreshed.managed
@@ -1505,8 +1505,7 @@ final class V011AccessModel:
             if let result {
                 applyAgentLoopResult(result, matchesCurrent: false)
             }
-            self.errorMessage = errorMessage
-            self.status = status
+            recoveryActionDidReject(status: status, errorMessage: errorMessage)
         }
     }
 
@@ -1542,9 +1541,9 @@ final class V011AccessModel:
     func recoveryActionDidBecomeIdle() {
         isWorking = false
     }
-
-    func recoveryActionRequestsRefresh() {
-        refresh()
+    func recoveryActionRequestsRefresh(completion: (() -> Void)?) {
+        guard allowsAccessRefreshStart else { return }
+        refreshController.request(reason: .manual, debounceNanoseconds: 0, completion: completion)
     }
 
     var allowsSwitchEntry: Bool {

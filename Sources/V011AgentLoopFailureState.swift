@@ -3,7 +3,7 @@ import Foundation
 /// Transient verification errors are not receipts: no request or tool outcome
 /// is invented. Keep the captured attempt scope until the next explicit check.
 struct V011AgentLoopFailureState {
-    private struct Scope: Equatable {
+    struct Scope: Equatable {
         let configHash: String
         let providerID: String
         let version: CodexVersionIdentity
