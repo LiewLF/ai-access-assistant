@@ -1629,7 +1629,7 @@ fn thread_filter(
     }
     let mut predicates = Vec::with_capacity(2);
     if columns.contains("thread_source") {
-        predicates.push("COALESCE(threads.thread_source, '') <> 'subagent'");
+        predicates.push("COALESCE(threads.thread_source, '') NOT IN ('subagent', 'guardian_review')");
     }
     if table_exists(connection, "thread_spawn_edges")? {
         predicates.push(
